@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Word Race</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- ══ JOIN SCREEN ══ -->
+  <div id="join-screen">
+    <div class="join-card">
+      <h1 class="logo">WORD<span>RACE</span></h1>
+      <p class="subtitle">Real-time 2-player word battle</p>
+      <input id="name-input" type="text" placeholder="Enter your name…" maxlength="20" autocomplete="off" autofocus>
+      <button id="join-btn">Join Game</button>
+      <p id="wait-msg" class="wait-msg hidden">Waiting for the second player…</p>
+    </div>
+  </div>
+
+  <!-- ══ GAME SCREEN ══ -->
+  <div id="game-screen" class="hidden">
+
+    <div class="top-bar">
+      <div class="player-card" id="left-player">
+        <div class="pname" id="left-name">—</div>
+        <div class="pscore" id="left-score">0</div>
+      </div>
+
+      <div class="center-bar">
+        <div class="game-label">WORD RACE</div>
+        <div class="timer" id="timer">2:00</div>
+      </div>
+
+      <div class="player-card right" id="right-player">
+        <div class="pname" id="right-name">—</div>
+        <div class="pscore" id="right-score">0</div>
+      </div>
+    </div>
+
+    <div class="game-area">
+
+      <!-- Left panel: word builder + scoring guide -->
+      <div class="side-panel left-panel">
+        <div class="panel-title">YOUR WORD</div>
+        <div class="word-display" id="word-display">_ _ _</div>
+        <div class="hint-box" id="hint-box"></div>
+        <div class="btn-row">
+          <button id="submit-btn" disabled>Submit ↵</button>
+          <button id="clear-btn">✕ Clear</button>
+        </div>
+
+        <div class="type-divider"><span>or type a word</span></div>
+        <form id="type-form" autocomplete="off">
+          <input id="type-input" type="text" maxlength="20" placeholder="Type word + Enter" spellcheck="false">
+        </form>
+        <div class="score-guide">
+          <div class="sg-heading">SCORING</div>
+          <div class="sg-row"><span>3 letters</span><b>1 pt</b></div>
+          <div class="sg-row"><span>4 letters</span><b>2 pts</b></div>
+          <div class="sg-row"><span>5 letters</span><b>4 pts</b></div>
+          <div class="sg-row"><span>6 letters</span><b>6 pts</b></div>
+          <div class="sg-row"><span>7+ letters</span><b>10 pts</b></div>
+        </div>
+      </div>
+
+      <!-- Center: 5×5 grid -->
+      <div class="grid-panel">
+        <div class="grid" id="grid"></div>
+      </div>
+
+      <!-- Right panel: claimed-word log -->
+      <div class="side-panel right-panel">
+        <div class="panel-title">CLAIMED WORDS</div>
+        <div class="word-log" id="word-log">
+          <div class="log-empty">No words claimed yet</div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ══ GAME-OVER OVERLAY ══ -->
+  <div id="gameover-screen" class="overlay hidden">
+    <div class="result-card">
+      <div class="result-emoji" id="result-emoji">🏆</div>
+      <h2 id="result-headline">Game Over</h2>
+      <div class="result-scores" id="result-scores"></div>
+      <button id="play-again-btn">Play Again</button>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+</body>
+</html>
