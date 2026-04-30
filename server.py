@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Word Race — multi-room asyncio server (HTTP static files + WebSocket game logic)."""
+"""Word Race — multi-room asyncio server with variable capacity (2-4 players)."""
 
 import asyncio
 import json
@@ -18,9 +18,11 @@ from websockets.http11 import Response
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-PORT   = int(os.environ.get("PORT", 3000))
-HOST   = os.environ.get("HOST", "0.0.0.0")
-PUBLIC = Path(__file__).parent / "public"
+PORT         = int(os.environ.get("PORT", 3000))
+HOST         = os.environ.get("HOST", "0.0.0.0")
+PUBLIC       = Path(__file__).parent / "public"
+MAX_CAPACITY = 4
+MIN_CAPACITY = 2
 
 POOL = (
     "E" * 12 + "T" * 9 + "A" * 8 + "O" * 7 + "I" * 7 + "N" * 7 +
@@ -30,7 +32,7 @@ POOL = (
 )
 
 # ---------------------------------------------------------------------------
-# Game helpers (pure functions)
+# Game helpers
 # ---------------------------------------------------------------------------
 def make_grid():
     return [random.choice(POOL) for _ in range(25)]
@@ -53,7 +55,6 @@ def valid_path(p) -> bool:
     return True
 
 def find_path(grid, word: str):
-    """DFS for any path of adjacent cells spelling `word`. Returns indices or None."""
     word = word.upper()
     n = len(word)
     if n < 3:
@@ -102,14 +103,15 @@ async def dict_check(word: str) -> bool:
     return await loop.run_in_executor(None, _fetch)
 
 # ---------------------------------------------------------------------------
-# Room (one game session)
+# Room
 # ---------------------------------------------------------------------------
 class Room:
     def __init__(self, room_id: str):
-        self.id           = room_id
-        self.sockets      = {}    # websocket -> player_id ("p1" / "p2")
-        self.timer_task   = None
-        self.state        = self._fresh_state()
+        self.id          = room_id
+        self.sockets     = {}     # ws -> player_id (or None for unjoined spectator)
+        self.capacity    = None   # set by first joiner (2-4)
+        self.timer_task  = None
+        self.state       = self._fresh_state()
 
     @staticmethod
     def _fresh_state(players=None, names=None):
@@ -132,29 +134,43 @@ class Room:
         self.state["active"]  = True
         self.state["started"] = True
 
-    def free_slot(self):
-        used = set(self.sockets.values())
-        if "p1" not in used: return "p1"
-        if "p2" not in used: return "p2"
+    def player_count(self) -> int:
+        return len(self.state["players"])
+
+    def is_full(self) -> bool:
+        return self.capacity is not None and self.player_count() >= self.capacity
+
+    def next_slot(self):
+        used = set(self.state["players"].keys())
+        for i in range(1, MAX_CAPACITY + 1):
+            pid = f"p{i}"
+            if pid not in used:
+                return pid
         return None
+
+    def connected_player_ids(self):
+        return {pid for pid in self.sockets.values() if pid is not None}
 
     def snapshot(self, for_id):
         s = self.state
         return {
-            "grid":         s["grid"],
-            "players":      s["names"],
-            "scores":       s["scores"],
-            "claimed":      s["claimed"],
-            "claimedOrder": s["claimed_order"],
-            "timeLeft":     s["time_left"],
-            "active":       s["active"],
-            "started":      s["started"],
-            "winner":       s["winner"],
-            "yourId":       for_id,
-            "roomId":       self.id,
+            "grid":          s["grid"],
+            "players":       s["names"],
+            "playerIds":     list(s["players"].keys()),
+            "scores":        s["scores"],
+            "claimed":       s["claimed"],
+            "claimedOrder":  s["claimed_order"],
+            "timeLeft":      s["time_left"],
+            "active":        s["active"],
+            "started":       s["started"],
+            "winner":        s["winner"],
+            "yourId":        for_id,
+            "roomId":        self.id,
+            "capacity":      self.capacity,
+            "connected":     list(self.connected_player_ids()),
         }
 
-rooms = {}    # room_id -> Room
+rooms = {}
 
 def get_room(room_id: str) -> Room:
     if room_id not in rooms:
@@ -188,7 +204,7 @@ async def send_to(room: Room, player_id, **kw):
             await send(ws, **kw)
 
 # ---------------------------------------------------------------------------
-# Timer / round management
+# Timer / round
 # ---------------------------------------------------------------------------
 async def run_timer(room: Room):
     try:
@@ -207,19 +223,21 @@ async def end_game(room: Room):
     if room.timer_task and not room.timer_task.done():
         room.timer_task.cancel()
     room.state["active"] = False
-    ids = list(room.state["scores"])
+    scores = room.state["scores"]
     winner = None
-    if len(ids) == 2:
-        a, b = ids
-        if   room.state["scores"][a] > room.state["scores"][b]: winner = a
-        elif room.state["scores"][b] > room.state["scores"][a]: winner = b
-        else:                                                    winner = "tie"
+    if scores:
+        ordered = sorted(scores, key=lambda p: scores[p], reverse=True)
+        if len(ordered) >= 2 and scores[ordered[0]] == scores[ordered[1]]:
+            winner = "tie"
+        else:
+            winner = ordered[0]
     room.state["winner"] = winner
     await broadcast(
         room,
         type="gameover",
-        scores=room.state["scores"],
+        scores=scores,
         players=room.state["names"],
+        playerIds=list(room.state["players"].keys()),
         winner=winner,
     )
 
@@ -228,7 +246,8 @@ async def new_round(room: Room):
         room.timer_task.cancel()
     room.reset()
     for ws, pid in list(room.sockets.items()):
-        await send(ws, type="newround", **room.snapshot(pid))
+        if pid is not None:
+            await send(ws, type="newround", **room.snapshot(pid))
     room.timer_task = asyncio.create_task(run_timer(room))
 
 # ---------------------------------------------------------------------------
@@ -274,13 +293,16 @@ async def handler(ws):
     room_id = parse_room_id(ws.request.path)
     room    = get_room(room_id)
 
-    slot = room.free_slot()
-    if slot is None:
-        await send(ws, type="error", msg="That game room is full. Try a different link or refresh later.")
-        return
+    # Connect as unjoined spectator
+    room.sockets[ws] = None
 
-    player_id = slot
-    room.sockets[ws] = player_id
+    # Send current room status so the client can decide what to render
+    await send(ws, type="room_info",
+               roomId=room.id,
+               capacity=room.capacity,
+               joined=room.player_count(),
+               isFull=room.is_full(),
+               started=room.state["started"])
 
     try:
         async for raw in ws:
@@ -293,29 +315,64 @@ async def handler(ws):
 
             # ── JOIN ──
             if t == "join":
-                name = str(msg.get("name") or f"Player {'1' if player_id=='p1' else '2'}").strip()[:20] or "Player"
+                if room.sockets.get(ws) is not None:
+                    continue   # already joined
+
+                name = str(msg.get("name") or "Player").strip()[:20] or "Player"
+
+                # First joiner sets the capacity for this room
+                if room.capacity is None:
+                    cap_raw = msg.get("capacity", 2)
+                    try:
+                        cap = int(cap_raw)
+                    except (TypeError, ValueError):
+                        cap = 2
+                    room.capacity = max(MIN_CAPACITY, min(MAX_CAPACITY, cap))
+
+                if room.is_full():
+                    await send(ws, type="room_full")
+                    continue
+
+                slot = room.next_slot()
+                if slot is None:
+                    await send(ws, type="room_full")
+                    continue
+
+                room.sockets[ws] = slot
+                player_id = slot
                 room.state["players"][player_id] = player_id
                 room.state["names"][player_id]   = name
                 room.state["scores"].setdefault(player_id, 0)
 
+                # Confirm to the joiner
                 await send(ws, type="init", **room.snapshot(player_id))
 
-                if len(room.sockets) == 2 and len(room.state["players"]) == 2:
+                # Update everyone (joined + still-waiting spectators)
+                await broadcast(room, type="waiting",
+                                players=room.state["names"],
+                                playerIds=list(room.state["players"].keys()),
+                                capacity=room.capacity,
+                                joined=room.player_count(),
+                                connected=list(room.connected_player_ids()))
+
+                # Start the game once room is at capacity
+                if room.player_count() >= room.capacity:
                     room.state["active"]  = True
                     room.state["started"] = True
                     for w, pid in list(room.sockets.items()):
-                        await send(w, type="start", **room.snapshot(pid))
+                        if pid is not None:
+                            await send(w, type="start", **room.snapshot(pid))
                     room.timer_task = asyncio.create_task(run_timer(room))
-                else:
-                    await broadcast(room, type="waiting", players=room.state["names"])
 
             # ── SUBMIT ──
             elif t == "submit":
-                if not room.state["active"]:
+                player_id = room.sockets.get(ws)
+                if player_id is None or not room.state["active"]:
                     continue
+
                 wpath = msg.get("path")
                 raw_word = msg.get("word", "")
-                word  = str(raw_word).strip().upper() if isinstance(raw_word, str) else ""
+                word = str(raw_word).strip().upper() if isinstance(raw_word, str) else ""
 
                 if len(word) < 3 or not word.isalpha():
                     await send_to(room, player_id, type="result", ok=False, reason="badpath", word=word)
@@ -336,7 +393,6 @@ async def handler(ws):
                     continue
 
                 valid = await dict_check(word)
-
                 if not valid:
                     await send_to(room, player_id, type="result", ok=False, reason="notword", word=word)
                     continue
@@ -363,20 +419,20 @@ async def handler(ws):
 
             # ── NEW ROUND ──
             elif t == "newround":
+                if room.sockets.get(ws) is None:
+                    continue
                 await new_round(room)
 
     except Exception:
         pass
     finally:
-        room.sockets.pop(ws, None)
-        room.state["players"].pop(player_id, None)
-        room.state["names"].pop(player_id, None)
-        room.state["scores"].pop(player_id, None)
-        if room.timer_task and not room.timer_task.done():
-            room.timer_task.cancel()
-        room.state["active"] = False
-        await broadcast(room, type="disconnect", playerId=player_id, players=room.state["names"])
-        cleanup_room(room)
+        player_id = room.sockets.pop(ws, None)
+        if not room.sockets:
+            cleanup_room(room)
+        elif player_id is not None:
+            await broadcast(room, type="disconnect",
+                            playerId=player_id,
+                            connected=list(room.connected_player_ids()))
 
 # ---------------------------------------------------------------------------
 # Entry point

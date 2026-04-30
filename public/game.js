@@ -1,10 +1,9 @@
-// Word Race — client
+// Word Race — client (multi-room, 2-4 players)
 
-// ── Room code in URL ──────────────────────────────────────────────────────
+// ── Room code in URL ───────────────────────────────────────────────
 function genRoomCode() {
-  const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no I/O/0/1
-  let s = '';
-  for (let i = 0; i < 6; i++) s += a[Math.floor(Math.random() * a.length)];
+  const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let s = ''; for (let i = 0; i < 6; i++) s += a[Math.floor(Math.random() * a.length)];
   return s;
 }
 const params = new URLSearchParams(location.search);
@@ -17,30 +16,37 @@ if (!roomId) {
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const ws = new WebSocket(`${wsProto}://${location.host}/?r=${roomId}`);
 
-let myId       = null;
-let grid       = [];
-let path       = [];       // current cell-index path being built
-let lastPath   = [];       // path of last submitted word (for flash animation)
-let scores     = {};
-let players    = {};
-let gameActive = false;
+// ── State ──────────────────────────────────────────────────────────
+let myId        = null;
+let grid        = [];
+let path        = [];
+let lastPath    = [];
+let scores      = {};
+let players     = {};        // { p1: "Alice", p2: "Bob" }
+let playerIds   = [];        // ordered slot list
+let connected   = new Set();
+let gameActive  = false;
+let roomInfo    = null;      // { capacity, joined, isFull, started, roomId }
 
-// ── DOM refs ──────────────────────────────────────────────────────────────
+// ── DOM ────────────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
 const joinScreen     = $('join-screen');
 const gameScreen     = $('game-screen');
 const gameoverScreen = $('gameover-screen');
+
 const nameInput      = $('name-input');
 const joinBtn        = $('join-btn');
 const waitMsg        = $('wait-msg');
+const capBlock       = $('capacity-block');
+const roomStatus     = $('room-status');
+const roomCodeEl     = $('room-code');
+const shareBlock     = $('share-block');
+const codeForm       = $('code-form');
+const codeInput      = $('code-input');
+
 const timerEl        = $('timer');
-const leftPlayer     = $('left-player');
-const rightPlayer    = $('right-player');
-const leftName       = $('left-name');
-const rightName      = $('right-name');
-const leftScore      = $('left-score');
-const rightScore     = $('right-score');
+const playerRow      = $('player-row');
 const gridEl         = $('grid');
 const wordDisplay    = $('word-display');
 const hintBox        = $('hint-box');
@@ -48,47 +54,69 @@ const submitBtn      = $('submit-btn');
 const clearBtn       = $('clear-btn');
 const wordLog        = $('word-log');
 
-// ── User actions ─────────────────────────────────────────────────────────
-joinBtn.addEventListener('click', doJoin);
-nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
-submitBtn.addEventListener('click', doSubmit);
-clearBtn.addEventListener('click', doClear);
-$('play-again-btn').addEventListener('click', () => send('newround'));
+// ── Show room code on join card ────────────────────────────────────
+roomCodeEl.textContent  = roomId;
+$('share-url').value    = location.href;
 
-// Show room code + share link on the join screen
-$('room-code').textContent = roomId;
-$('share-url').value = location.href;
 $('copy-btn').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(location.href);
     $('copy-btn').textContent = 'Copied!';
     setTimeout(() => $('copy-btn').textContent = 'Copy', 1500);
-  } catch {
-    $('share-url').select();
-  }
+  } catch { $('share-url').select(); }
 });
-$('new-room-btn').addEventListener('click', () => {
-  location.search = '?r=' + genRoomCode();
+
+// Room-code form: navigate to that room
+codeForm.addEventListener('submit', e => {
+  e.preventDefault();
+  const code = codeInput.value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+  if (!code || code === roomId) return;
+  location.search = `?r=${code}`;
 });
+
+// ── Join button ────────────────────────────────────────────────────
+joinBtn.addEventListener('click', doJoin);
+nameInput.addEventListener('keydown', e => { if (e.key === 'Enter') doJoin(); });
+nameInput.addEventListener('input', updateJoinEnabled);
+
+function selectedCapacity() {
+  const r = document.querySelector('input[name="cap"]:checked');
+  return r ? parseInt(r.value, 10) : 2;
+}
+
+function updateJoinEnabled() {
+  const hasName = nameInput.value.trim().length > 0;
+  const blocked = roomInfo && roomInfo.isFull;
+  joinBtn.disabled = !hasName || blocked;
+}
+
+function doJoin() {
+  const name = nameInput.value.trim();
+  if (!name || (roomInfo && roomInfo.isFull)) return;
+  const payload = { name };
+  // Only send capacity if we're the room creator
+  if (roomInfo && roomInfo.capacity == null) payload.capacity = selectedCapacity();
+  send('join', payload);
+  joinBtn.disabled    = true;
+  nameInput.disabled  = true;
+  capBlock.classList.add('hidden');
+  waitMsg.classList.remove('hidden');
+  shareBlock.classList.remove('hidden');
+}
+
+submitBtn.addEventListener('click', doSubmit);
+clearBtn.addEventListener('click', doClear);
+$('play-again-btn').addEventListener('click', () => send('newround'));
 
 $('type-form').addEventListener('submit', e => {
   e.preventDefault();
   const input = $('type-input');
   const word = input.value.trim().toUpperCase();
   if (!gameActive || word.length < 3 || !/^[A-Z]+$/.test(word)) return;
-  lastPath = [];                              // server will return the path it found
-  send('submit', { word });                    // no `path` → server searches the grid
+  lastPath = [];
+  send('submit', { word });
   input.value = '';
 });
-
-function doJoin() {
-  const name = nameInput.value.trim() || 'Player';
-  send('join', { name });
-  joinBtn.disabled   = true;
-  nameInput.disabled = true;
-  waitMsg.classList.remove('hidden');
-  $('share-block').classList.remove('hidden');
-}
 
 function doSubmit() {
   if (path.length < 3 || !gameActive) return;
@@ -98,12 +126,9 @@ function doSubmit() {
   doClear();
 }
 
-function doClear() {
-  path = [];
-  renderPath();
-}
+function doClear() { path = []; renderPath(); }
 
-// ── WebSocket ─────────────────────────────────────────────────────────────
+// ── WebSocket ──────────────────────────────────────────────────────
 function send(type, data = {}) {
   if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type, ...data }));
 }
@@ -113,9 +138,15 @@ ws.addEventListener('message', e => {
   (handlers[msg.type] || (() => {}))(msg);
 });
 
-ws.addEventListener('close', () => showHint('Connection lost — please refresh the page.', 'bad'));
+ws.addEventListener('close', () => showHint('Connection lost — please refresh.', 'bad'));
 
 const handlers = {
+
+  room_info(msg) {
+    roomInfo = msg;
+    renderRoomStatus();
+    updateJoinEnabled();
+  },
 
   init(msg) {
     myId = msg.yourId;
@@ -123,8 +154,16 @@ const handlers = {
   },
 
   waiting(msg) {
-    players = msg.players || {};
-    updateScoreboard();
+    players   = msg.players || {};
+    playerIds = msg.playerIds || Object.keys(players);
+    connected = new Set(msg.connected || playerIds);
+    if (roomInfo) {
+      roomInfo.capacity = msg.capacity;
+      roomInfo.joined   = msg.joined;
+      roomInfo.isFull   = msg.joined >= msg.capacity;
+    }
+    renderRoomStatus();
+    waitMsg.textContent = `Waiting for players… (${msg.joined}/${msg.capacity})`;
   },
 
   start(msg) {
@@ -135,22 +174,20 @@ const handlers = {
     hide(gameoverScreen);
   },
 
-  tick(msg) {
-    renderTimer(msg.t);
-  },
+  tick(msg) { renderTimer(msg.t); },
 
   claimed(msg) {
     scores = msg.scores;
-    updateScoreboard();
+    renderPlayerRow();
     addLogEntry(msg.word, msg.playerId, msg.name, msg.pts);
     const flashPath = msg.path && msg.path.length ? msg.path : lastPath;
+    flashCells(flashPath, 'ok');
     if (msg.playerId === myId) {
-      flashCells(flashPath, 'ok');
       showHint(`✓ +${msg.pts} point${msg.pts !== 1 ? 's' : ''}!`, 'ok');
-      bumpScore('left');
+      bumpPlayerScore(myId);
     } else {
-      flashCells(flashPath, 'ok');
       showHint(`${msg.name} claimed ${msg.word}`, 'warn');
+      bumpPlayerScore(msg.playerId);
     }
   },
 
@@ -167,9 +204,10 @@ const handlers = {
 
   gameover(msg) {
     gameActive = false;
-    scores  = msg.scores;
-    players = msg.players;
-    updateScoreboard();
+    scores    = msg.scores;
+    players   = msg.players;
+    playerIds = msg.playerIds || Object.keys(players);
+    renderPlayerRow();
     showGameOver(msg);
   },
 
@@ -182,25 +220,60 @@ const handlers = {
     doClear();
   },
 
-  disconnect() {
-    gameActive = false;
-    showHint('The other player disconnected.', 'bad');
+  disconnect(msg) {
+    connected = new Set(msg.connected || []);
+    renderPlayerRow();
+    showHint(`${players[msg.playerId] || 'A player'} disconnected.`, 'warn');
   },
 
-  error(msg) {
-    alert(msg.msg);
+  room_full() {
+    roomStatus.textContent = 'This room is full. Try a different room code.';
+    roomStatus.classList.add('full');
+    roomStatus.classList.remove('hidden');
+    joinBtn.disabled = true;
+    nameInput.disabled = false;
+    capBlock.classList.add('hidden');
+    waitMsg.classList.add('hidden');
   },
+
+  error(msg) { alert(msg.msg || 'Error'); },
 };
 
-// ── State application ─────────────────────────────────────────────────────
+// ── Render: room status (capacity selector / waiting / full) ───────
+function renderRoomStatus() {
+  if (!roomInfo) return;
+  const { capacity, joined, isFull, started } = roomInfo;
+
+  if (capacity == null) {
+    // Brand new room — let user pick capacity
+    capBlock.classList.remove('hidden');
+    roomStatus.classList.add('hidden');
+    waitMsg.classList.add('hidden');
+  } else if (started || isFull) {
+    capBlock.classList.add('hidden');
+    roomStatus.textContent = isFull && !started ? 'Room is full.' : 'Game is in progress.';
+    roomStatus.classList.add('full');
+    roomStatus.classList.remove('hidden');
+  } else {
+    // Existing room with open seats
+    capBlock.classList.add('hidden');
+    roomStatus.classList.remove('full');
+    roomStatus.textContent = `Joining ${joined}/${capacity}-player room.`;
+    roomStatus.classList.remove('hidden');
+  }
+}
+
+// ── State ──────────────────────────────────────────────────────────
 function applyState(msg) {
-  grid       = msg.grid       || [];
-  scores     = msg.scores     || {};
-  players    = msg.players    || {};
-  gameActive = msg.active     || false;
+  grid       = msg.grid || [];
+  scores     = msg.scores || {};
+  players    = msg.players || {};
+  playerIds  = msg.playerIds || Object.keys(players);
+  connected  = new Set(msg.connected || playerIds);
+  gameActive = msg.active || false;
 
   buildGrid(grid);
-  updateScoreboard();
+  renderPlayerRow();
   renderTimer(msg.timeLeft ?? 120);
 
   if (msg.claimedOrder?.length) {
@@ -212,7 +285,7 @@ function applyState(msg) {
   }
 }
 
-// ── Grid ─────────────────────────────────────────────────────────────────
+// ── Grid ───────────────────────────────────────────────────────────
 function buildGrid(letters) {
   gridEl.innerHTML = '';
   letters.forEach((letter, i) => {
@@ -227,32 +300,19 @@ function buildGrid(letters) {
 
 function onCellClick(idx) {
   if (!gameActive) return;
-
-  // Tap the last selected cell again → deselect it
-  if (path.at(-1) === idx) {
-    path.pop();
-    renderPath();
-    return;
-  }
-
-  // Already in path (not last) → ignore
+  if (path.at(-1) === idx) { path.pop(); renderPath(); return; }
   if (path.includes(idx)) return;
-
-  // Must touch the previous cell in one of 8 directions
   if (path.length > 0 && !adjacent(path.at(-1), idx)) return;
-
   path.push(idx);
   renderPath();
 }
 
 function adjacent(a, b) {
   return Math.abs(Math.floor(a / 5) - Math.floor(b / 5)) <= 1 &&
-         Math.abs((a % 5)           - (b % 5))           <= 1 &&
-         a !== b;
+         Math.abs((a % 5) - (b % 5)) <= 1 && a !== b;
 }
 
 function renderPath() {
-  // Rebuild cell states
   [...gridEl.children].forEach((cell, i) => {
     cell.classList.remove('selected');
     cell.querySelector('.badge')?.remove();
@@ -265,10 +325,9 @@ function renderPath() {
       cell.appendChild(badge);
     }
   });
-
   const word = path.map(i => grid[i]).join('');
   wordDisplay.textContent = word || '_ _ _';
-  submitBtn.disabled = word.length < 3;
+  submitBtn.disabled      = word.length < 3;
   if (!word) clearHint();
 }
 
@@ -278,39 +337,45 @@ function flashCells(indices, type) {
     const cell = gridEl.children[idx];
     if (!cell) return;
     cell.classList.remove('flash-ok', 'flash-bad');
-    void cell.offsetWidth; // force reflow so animation restarts
+    void cell.offsetWidth;
     cell.classList.add(type === 'ok' ? 'flash-ok' : 'flash-bad');
     setTimeout(() => cell.classList.remove('flash-ok', 'flash-bad'), 600);
   });
 }
 
-// ── Scoreboard ───────────────────────────────────────────────────────────
-function updateScoreboard() {
-  // Always show the local player on the left
-  const opId = Object.keys(players).find(id => id !== myId);
-
-  if (myId && players[myId] != null) {
-    leftName.innerHTML  = `${escHtml(players[myId])}<span class="you-tag">(you)</span>`;
-    leftScore.textContent = scores[myId] ?? 0;
-    leftPlayer.classList.add('you');
-  }
-
-  if (opId && players[opId] != null) {
-    rightName.textContent  = players[opId];
-    rightScore.textContent = scores[opId] ?? 0;
-    rightPlayer.classList.remove('you');
-  }
+// ── Player row ─────────────────────────────────────────────────────
+function playerColorVar(pid) {
+  const map = { p1: '--p1', p2: '--p2', p3: '--p3', p4: '--p4' };
+  return `var(${map[pid] || '--accent'})`;
 }
 
-function bumpScore(side) {
-  const el = side === 'left' ? leftScore : rightScore;
+function renderPlayerRow() {
+  playerRow.innerHTML = '';
+  // Show your card first, then the rest in slot order
+  const ordered = [myId, ...playerIds.filter(id => id !== myId)].filter(id => id && players[id] != null);
+  ordered.forEach(pid => {
+    const card = document.createElement('div');
+    card.className = 'player-card' + (pid === myId ? ' you' : '') + (connected.has(pid) ? '' : ' disconnected');
+    card.dataset.player = pid;
+    card.style.setProperty('--player-color', playerColorVar(pid));
+    card.innerHTML = `
+      <div class="pname">${escHtml(players[pid])}${pid === myId ? '<span class="you-tag">YOU</span>' : ''}</div>
+      <div class="pscore" data-pid="${pid}">${scores[pid] ?? 0}</div>
+    `;
+    playerRow.appendChild(card);
+  });
+}
+
+function bumpPlayerScore(pid) {
+  const el = playerRow.querySelector(`.pscore[data-pid="${pid}"]`);
+  if (!el) return;
   el.classList.remove('bump');
   void el.offsetWidth;
   el.classList.add('bump');
   setTimeout(() => el.classList.remove('bump'), 400);
 }
 
-// ── Timer ─────────────────────────────────────────────────────────────────
+// ── Timer ──────────────────────────────────────────────────────────
 function renderTimer(t) {
   const m = Math.floor(t / 60);
   const s = t % 60;
@@ -318,7 +383,7 @@ function renderTimer(t) {
   timerEl.classList.toggle('low', t <= 15);
 }
 
-// ── Hint ──────────────────────────────────────────────────────────────────
+// ── Hint ───────────────────────────────────────────────────────────
 let hintTimeout;
 function showHint(text, type) {
   hintBox.textContent = text;
@@ -326,15 +391,13 @@ function showHint(text, type) {
   clearTimeout(hintTimeout);
   hintTimeout = setTimeout(clearHint, 2600);
 }
-function clearHint() {
-  hintBox.textContent = '';
-  hintBox.className   = 'hint-box';
-}
+function clearHint() { hintBox.textContent = ''; hintBox.className = 'hint-box'; }
 
-// ── Word log ──────────────────────────────────────────────────────────────
+// ── Word log ───────────────────────────────────────────────────────
 function addLogEntry(word, playerId, name, pts) {
   const entry = document.createElement('div');
-  entry.className = `log-entry ${playerId === myId ? 'by-me' : 'by-them'}`;
+  entry.className = `log-entry${playerId === myId ? ' by-me' : ''}`;
+  entry.style.setProperty('--player-color', playerColorVar(playerId));
   entry.innerHTML = `
     <span class="log-word">${escHtml(word)}</span>
     <span class="log-pts">+${pts}</span>
@@ -345,30 +408,28 @@ function addLogEntry(word, playerId, name, pts) {
   wordLog.insertBefore(entry, wordLog.firstChild);
 }
 
-// ── Game over ─────────────────────────────────────────────────────────────
-function showGameOver({ scores: sc, players: pl, winner }) {
+// ── Game over ──────────────────────────────────────────────────────
+function showGameOver({ scores: sc, players: pl, playerIds: ids, winner }) {
   let emoji, headline;
-
   if (winner === 'tie') {
-    emoji    = '🤝';
+    emoji = '🤝';
     headline = "It's a Tie!";
   } else if (winner === myId) {
-    emoji    = '🏆';
+    emoji = '🏆';
     headline = 'You Win!';
   } else if (winner) {
-    emoji    = '🎯';
+    emoji = '🎯';
     headline = `${pl[winner]} Wins!`;
   } else {
-    emoji    = '⏱';
+    emoji = '⏱';
     headline = 'Game Over';
   }
-
   $('result-emoji').textContent    = emoji;
   $('result-headline').textContent = headline;
 
-  const sorted = Object.keys(pl).sort((a, b) => (sc[b] || 0) - (sc[a] || 0));
+  const sorted = (ids || Object.keys(pl)).slice().sort((a, b) => (sc[b] || 0) - (sc[a] || 0));
   $('result-scores').innerHTML = sorted.map(id => `
-    <div class="result-row ${id === winner ? 'winner' : ''}">
+    <div class="result-row${id === winner ? ' winner' : ''}" style="--player-color: ${playerColorVar(id)};">
       <span class="rname">${escHtml(pl[id])}${id === myId ? ' <small>(you)</small>' : ''}</span>
       <span class="rpts">${sc[id] || 0} pts</span>
     </div>
@@ -377,14 +438,11 @@ function showGameOver({ scores: sc, players: pl, winner }) {
   show(gameoverScreen);
 }
 
-// ── Utility ───────────────────────────────────────────────────────────────
+// ── Util ───────────────────────────────────────────────────────────
 function show(el) { el.classList.remove('hidden'); }
 function hide(el) { el.classList.add('hidden'); }
-
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
