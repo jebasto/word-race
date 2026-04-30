@@ -1,7 +1,21 @@
 // Word Race — client
 
+// ── Room code in URL ──────────────────────────────────────────────────────
+function genRoomCode() {
+  const a = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // no I/O/0/1
+  let s = '';
+  for (let i = 0; i < 6; i++) s += a[Math.floor(Math.random() * a.length)];
+  return s;
+}
+const params = new URLSearchParams(location.search);
+let roomId = (params.get('r') || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12);
+if (!roomId) {
+  roomId = genRoomCode();
+  history.replaceState(null, '', `?r=${roomId}`);
+}
+
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(`${wsProto}://${location.host}`);
+const ws = new WebSocket(`${wsProto}://${location.host}/?r=${roomId}`);
 
 let myId       = null;
 let grid       = [];
@@ -41,6 +55,22 @@ submitBtn.addEventListener('click', doSubmit);
 clearBtn.addEventListener('click', doClear);
 $('play-again-btn').addEventListener('click', () => send('newround'));
 
+// Show room code + share link on the join screen
+$('room-code').textContent = roomId;
+$('share-url').value = location.href;
+$('copy-btn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(location.href);
+    $('copy-btn').textContent = 'Copied!';
+    setTimeout(() => $('copy-btn').textContent = 'Copy', 1500);
+  } catch {
+    $('share-url').select();
+  }
+});
+$('new-room-btn').addEventListener('click', () => {
+  location.search = '?r=' + genRoomCode();
+});
+
 $('type-form').addEventListener('submit', e => {
   e.preventDefault();
   const input = $('type-input');
@@ -57,6 +87,7 @@ function doJoin() {
   joinBtn.disabled   = true;
   nameInput.disabled = true;
   waitMsg.classList.remove('hidden');
+  $('share-block').classList.remove('hidden');
 }
 
 function doSubmit() {

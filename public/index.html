@@ -14,8 +14,20 @@
       <h1 class="logo">WORD<span>RACE</span></h1>
       <p class="subtitle">Real-time 2-player word battle</p>
       <input id="name-input" type="text" placeholder="Enter your name…" maxlength="20" autocomplete="off" autofocus>
+      <div class="room-row">
+        <span class="room-label">Room:</span>
+        <span class="room-code" id="room-code">—</span>
+      </div>
       <button id="join-btn">Join Game</button>
       <p id="wait-msg" class="wait-msg hidden">Waiting for the second player…</p>
+      <div id="share-block" class="share-block hidden">
+        <p class="share-hint">Share this link with a friend:</p>
+        <div class="share-row">
+          <input id="share-url" readonly>
+          <button id="copy-btn">Copy</button>
+        </div>
+        <button id="new-room-btn" class="link-btn">New room code</button>
+      </div>
     </div>
   </div>
 

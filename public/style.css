@@ -104,6 +104,70 @@ body {
 }
 @keyframes blink { 0%,100%{opacity:.4} 50%{opacity:1} }
 
+/* Room code + share link */
+.room-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  margin-top: 0.7rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  letter-spacing: 1.5px;
+}
+.room-code {
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: 3px;
+  font-size: 0.95rem;
+}
+
+.share-block {
+  margin-top: 1.1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.share-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-bottom: 0.5rem;
+}
+.share-row {
+  display: flex;
+  gap: 0.4rem;
+}
+.share-row input {
+  flex: 1;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.78rem;
+  outline: none;
+  font-family: monospace;
+}
+.share-row button {
+  padding: 0 0.9rem;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+.link-btn {
+  margin-top: 0.7rem;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  cursor: pointer;
+  text-decoration: underline;
+}
+.link-btn:hover { color: var(--accent); }
+
 /* ──────────────────── GAME SCREEN ──────────────────── */
 #game-screen {
   width: 100%;
@@ -351,15 +415,24 @@ body {
   border-radius: 10px;
   cursor: pointer;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
   position: relative;
-  transition: background 0.1s, border-color 0.1s, transform 0.1s, box-shadow 0.1s;
+  transition: background 0.08s, border-color 0.08s, transform 0.08s, box-shadow 0.08s;
   color: var(--text);
 }
 
-.cell:hover:not(.selected) {
-  background: #22223d;
-  border-color: rgba(108,99,255,0.35);
-  transform: scale(1.05);
+@media (hover: hover) {
+  .cell:hover:not(.selected) {
+    background: #22223d;
+    border-color: rgba(108,99,255,0.35);
+    transform: scale(1.05);
+  }
+}
+.cell:active:not(.selected) {
+  background: #2c2c4a;
+  transform: scale(0.97);
 }
 
 .cell.selected {
@@ -501,3 +574,71 @@ body {
 }
 #play-again-btn:hover  { opacity: 0.88; }
 #play-again-btn:active { transform: scale(0.97); }
+
+/* ──────────────────── MOBILE LAYOUT ──────────────────── */
+@media (max-width: 760px) {
+  body { align-items: flex-start; }
+
+  #game-screen {
+    padding: 0.5rem;
+    gap: 0.5rem;
+  }
+
+  .top-bar {
+    padding: 0.55rem 0.7rem;
+    border-radius: 12px;
+  }
+  .player-card {
+    min-width: 0;
+    flex: 1;
+    padding: 0.25rem 0.4rem;
+  }
+  .pname {
+    font-size: 0.72rem;
+    max-width: 90px;
+  }
+  .pscore { font-size: 1.7rem; }
+  .center-bar { padding: 0 0.4rem; }
+  .game-label { display: none; }
+  .timer { font-size: 1.9rem; letter-spacing: 1px; }
+
+  .game-area {
+    grid-template-columns: 1fr;
+    gap: 0.55rem;
+  }
+
+  /* Order: grid first (most important), then word builder, then log */
+  .grid-panel  { order: 1; padding: 0.7rem; }
+  .left-panel  { order: 2; padding: 0.85rem; gap: 0.6rem; }
+  .right-panel { order: 3; padding: 0.85rem; }
+
+  /* Cells scale with viewport — fit on phones from 320px up */
+  :root { --cell: min(58px, calc((100vw - 4rem) / 5)); --gap: 5px; }
+
+  .cell {
+    font-size: 1.35rem;
+    border-radius: 8px;
+    border-width: 2px;
+  }
+  .cell .badge { font-size: 0.5rem; top: 2px; right: 3px; }
+
+  .word-display { font-size: 1.15rem; letter-spacing: 3px; min-height: 2.4rem; }
+  .word-log { max-height: 200px; }
+
+  /* Hide the scoring guide on phones — saves precious vertical space */
+  .score-guide { display: none; }
+
+  /* Game-over card: fit phone screen */
+  .result-card {
+    min-width: 0;
+    width: calc(100vw - 2rem);
+    padding: 2rem 1.4rem;
+  }
+  .result-card h2 { font-size: 1.6rem; }
+  .result-emoji { font-size: 3rem; }
+}
+
+@media (max-width: 380px) {
+  :root { --cell: calc((100vw - 3rem) / 5); --gap: 4px; }
+  .cell { font-size: 1.15rem; }
+}
