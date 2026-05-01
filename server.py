@@ -86,7 +86,12 @@ def word_score(word: str) -> int:
     if n == 4: return 2
     if n == 5: return 4
     if n == 6: return 6
-    return 10
+    # 7+ letters: start at 10, then each extra letter adds an increasing bonus
+    # 7→10, 8→15 (+5), 9→21 (+6), 10→28 (+7), 11→36 (+8)…
+    pts = 10
+    for k in range(8, n + 1):
+        pts += (k - 3)
+    return pts
 
 async def dict_check(word: str) -> bool:
     url = f"https://api.dictionaryapi.dev/api/v2/entries/en/{urllib.parse.quote(word.lower())}"
