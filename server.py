@@ -260,21 +260,33 @@ async def new_round(room: Room):
 # ---------------------------------------------------------------------------
 def serve_static(request):
     raw = request.path.split("?")[0].lstrip("/") or "index.html"
-    safe = Path(os.path.normpath(PUBLIC / raw))
+    target = Path(os.path.normpath(PUBLIC / raw))
+
+    # Sandbox: never escape PUBLIC
     try:
-        safe.relative_to(PUBLIC.resolve())
+        target.relative_to(PUBLIC.resolve())
     except ValueError:
         body = b"Forbidden"
         return Response(HTTPStatus.FORBIDDEN, "Forbidden",
                         Headers([("Content-Type", "text/plain"), ("Content-Length", str(len(body)))]),
                         body)
-    if not safe.exists() or not safe.is_file():
+
+    # /word-race or /word-race/ → /word-race/index.html
+    if target.is_dir():
+        target = target / "index.html"
+    elif not target.exists() and "." not in target.name:
+        alt = PUBLIC / raw / "index.html"
+        if alt.exists():
+            target = alt
+
+    if not target.exists() or not target.is_file():
         body = b"Not Found"
         return Response(HTTPStatus.NOT_FOUND, "Not Found",
                         Headers([("Content-Type", "text/plain"), ("Content-Length", str(len(body)))]),
                         body)
-    content_type = mimetypes.guess_type(str(safe))[0] or "application/octet-stream"
-    body = safe.read_bytes()
+
+    content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+    body = target.read_bytes()
     return Response(HTTPStatus.OK, "OK",
                     Headers([("Content-Type", content_type), ("Content-Length", str(len(body)))]),
                     body)
@@ -295,6 +307,18 @@ def parse_room_id(path: str) -> str:
     return rid or "main"
 
 async def handler(ws):
+    """Top-level WS router — dispatches by path to per-game handlers."""
+    parsed = urllib.parse.urlparse(ws.request.path)
+    p = parsed.path.rstrip("/")
+
+    if p in ("/ws/word-race", "/word-race") or p == "":
+        await handle_word_race(ws)
+    # Future: elif p == "/ws/blackjack": await handle_blackjack(ws)
+    else:
+        try: await ws.close(code=1003, reason="unknown game")
+        except Exception: pass
+
+async def handle_word_race(ws):
     room_id = parse_room_id(ws.request.path)
     room    = get_room(room_id)
 

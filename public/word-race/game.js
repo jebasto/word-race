@@ -14,7 +14,7 @@ if (!roomId) {
 }
 
 const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
-const ws = new WebSocket(`${wsProto}://${location.host}/?r=${roomId}`);
+const ws = new WebSocket(`${wsProto}://${location.host}/ws/word-race?r=${roomId}`);
 
 // ── State ──────────────────────────────────────────────────────────
 let myId        = null;
@@ -58,6 +58,12 @@ const wordLog        = $('word-log');
 roomCodeEl.textContent  = roomId;
 $('share-url').value    = location.href;
 
+// Pre-fill name from shared profile (if available)
+if (window.Profile) {
+  const saved = Profile.get();
+  if (saved.name) nameInput.value = saved.name;
+}
+
 $('copy-btn').addEventListener('click', async () => {
   try {
     await navigator.clipboard.writeText(location.href);
@@ -93,6 +99,7 @@ function updateJoinEnabled() {
 function doJoin() {
   const name = nameInput.value.trim();
   if (!name || (roomInfo && roomInfo.isFull)) return;
+  if (window.Profile) Profile.update({ name });
   const payload = { name };
   // Only send capacity if we're the room creator
   if (roomInfo && roomInfo.capacity == null) payload.capacity = selectedCapacity();

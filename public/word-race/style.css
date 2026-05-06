@@ -1,6 +1,26 @@
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* Back-to-hub link */
+.back-to-hub {
+  position: fixed;
+  top: 0.8rem;
+  left: 0.8rem;
+  z-index: 200;
+  padding: 0.4rem 0.85rem;
+  background: rgba(20,20,40,0.85);
+  border: 1px solid rgba(108,99,255,0.3);
+  border-radius: 100px;
+  color: #6b6b8a;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-decoration: none;
+  letter-spacing: 0.5px;
+  backdrop-filter: blur(6px);
+  transition: color 0.15s, border-color 0.15s;
+}
+.back-to-hub:hover { color: #e8e8f0; border-color: #6c63ff; }
+
 :root {
   --bg:       #0d0d1a;
   --surface:  #141428;

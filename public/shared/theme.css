@@ -1,0 +1,26 @@
+/* Shared design tokens used across hub + games */
+:root {
+  --bg:       #0d0d1a;
+  --surface:  #141428;
+  --surface2: #1c1c38;
+  --accent:   #6c63ff;
+  --accent2:  #9490ff;
+  --green:    #4ecca3;
+  --red:      #ff6584;
+  --yellow:   #ffd166;
+  --gold:     #f4c430;
+  --text:     #e8e8f0;
+  --muted:    #6b6b8a;
+  --border:   rgba(108,99,255,0.18);
+  --radius:   14px;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  -webkit-tap-highlight-color: transparent;
+}

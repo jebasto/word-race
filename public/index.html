@@ -3,125 +3,104 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Word Race</title>
-  <link rel="stylesheet" href="style.css">
+  <title>GameHub</title>
+  <link rel="stylesheet" href="/shared/theme.css">
+  <link rel="stylesheet" href="/hub.css">
 </head>
 <body>
 
-  <!-- ══ JOIN SCREEN ══ -->
-  <div id="join-screen">
-    <div class="join-card">
-      <h1 class="logo">WORD<span>RACE</span></h1>
-      <p class="subtitle">Real-time multiplayer word battle</p>
+  <!-- Profile bar -->
+  <header class="hub-header">
+    <div class="hub-logo">GAME<span>HUB</span></div>
+    <div class="profile-chip" id="profile-chip">
+      <div class="profile-avatar" id="profile-avatar">?</div>
+      <div class="profile-info">
+        <div class="profile-name" id="profile-name">Set name</div>
+        <div class="profile-chips"><span id="profile-chips">1000</span> chips</div>
+      </div>
+      <button id="profile-edit" title="Change name">✎</button>
+    </div>
+  </header>
 
-      <input id="name-input" type="text" placeholder="Enter your name…" maxlength="20" autocomplete="off" autofocus>
+  <main class="hub-main">
+    <h1 class="hub-title">Pick a game</h1>
+    <p class="hub-subtitle">Real-time multiplayer mini-games</p>
 
-      <!-- Shown when this is a fresh room (you create it) -->
-      <div id="capacity-block" class="hidden">
-        <p class="block-label">How many players?</p>
-        <div class="cap-options" id="cap-options">
-          <label><input type="radio" name="cap" value="2" checked><span>2</span></label>
-          <label><input type="radio" name="cap" value="3"><span>3</span></label>
-          <label><input type="radio" name="cap" value="4"><span>4</span></label>
+    <div class="game-grid">
+
+      <a href="/word-race/" class="game-card live" data-game="word-race">
+        <div class="game-art" style="background: linear-gradient(135deg,#6c63ff,#3a3680);">
+          <div class="game-art-letter">W</div>
         </div>
-      </div>
-
-      <!-- Shown when joining an existing room -->
-      <p id="room-status" class="room-status hidden"></p>
-
-      <div class="room-row">
-        <span class="room-label">Room:</span>
-        <span class="room-code" id="room-code">—</span>
-      </div>
-
-      <button id="join-btn" disabled>Join Game</button>
-
-      <p id="wait-msg" class="wait-msg hidden">Waiting for players…</p>
-
-      <div id="share-block" class="share-block hidden">
-        <p class="share-hint">Share this link with friends:</p>
-        <div class="share-row">
-          <input id="share-url" readonly>
-          <button id="copy-btn">Copy</button>
+        <div class="game-card-body">
+          <h3>Word Race</h3>
+          <p>Race to spot valid words on a 5×5 grid before your opponents claim them.</p>
+          <div class="game-meta">
+            <span class="badge live-badge">● LIVE</span>
+            <span class="meta">2–4 players · 2 min</span>
+          </div>
         </div>
-      </div>
+      </a>
 
-      <div class="code-entry">
-        <p class="block-label small">Or join a different room:</p>
-        <form id="code-form" class="share-row">
-          <input id="code-input" placeholder="Room code" maxlength="12" autocomplete="off">
-          <button type="submit">Go</button>
-        </form>
+      <a href="/blackjack/" class="game-card soon" data-game="blackjack">
+        <div class="game-art" style="background: linear-gradient(135deg,#1a4d2e,#0d2818);">
+          <div class="game-art-letter">♠</div>
+        </div>
+        <div class="game-card-body">
+          <h3>Blackjack</h3>
+          <p>Beat the dealer at the classic table game. Bet your chips, hit or stand.</p>
+          <div class="game-meta">
+            <span class="badge soon-badge">SOON</span>
+            <span class="meta">1–4 players vs dealer</span>
+          </div>
+        </div>
+      </a>
+
+      <a href="#" class="game-card disabled" data-game="dharani">
+        <div class="game-art" style="background: linear-gradient(135deg,#c0392b,#7d2117);">
+          <div class="game-art-letter">D</div>
+        </div>
+        <div class="game-card-body">
+          <h3>Dharani</h3>
+          <p>A '90s-style platformer with a Tamil Nadu twist. Run, jump, collect coins.</p>
+          <div class="game-meta">
+            <span class="badge planned-badge">PLANNED</span>
+            <span class="meta">Single player</span>
+          </div>
+        </div>
+      </a>
+
+      <a href="#" class="game-card disabled" data-game="mariappa">
+        <div class="game-art" style="background: linear-gradient(135deg,#e67e22,#a04518);">
+          <div class="game-art-letter">M</div>
+        </div>
+        <div class="game-card-body">
+          <h3>Mariappa</h3>
+          <p>Side-scrolling adventure with a desi twist — samosas, autos and all.</p>
+          <div class="game-meta">
+            <span class="badge planned-badge">PLANNED</span>
+            <span class="meta">Single player</span>
+          </div>
+        </div>
+      </a>
+
+    </div>
+  </main>
+
+  <!-- Name dialog -->
+  <div id="name-dialog" class="overlay hidden">
+    <div class="dialog">
+      <h2>What's your name?</h2>
+      <p>This shows up across all games. You can change it anytime.</p>
+      <input id="name-dialog-input" type="text" placeholder="Your name…" maxlength="20" autocomplete="off">
+      <div class="dialog-row">
+        <button id="name-dialog-cancel" class="ghost">Cancel</button>
+        <button id="name-dialog-save">Save</button>
       </div>
     </div>
   </div>
 
-  <!-- ══ GAME SCREEN ══ -->
-  <div id="game-screen" class="hidden">
-
-    <!-- Top: timer + dynamic player cards -->
-    <div class="top-bar">
-      <div class="center-bar">
-        <div class="game-label">WORD RACE</div>
-        <div class="timer" id="timer">2:00</div>
-      </div>
-      <div class="player-row" id="player-row"></div>
-    </div>
-
-    <!-- Type-a-word input: lives ABOVE the grid so the mobile keyboard never hides the grid -->
-    <form id="type-form" class="type-row" autocomplete="off">
-      <input id="type-input" type="text" maxlength="20" placeholder="Type a word + Enter" spellcheck="false">
-    </form>
-
-    <div class="game-area">
-
-      <!-- Left: word builder + scoring -->
-      <div class="side-panel left-panel">
-        <div class="panel-title">YOUR WORD</div>
-        <div class="word-display" id="word-display">_ _ _</div>
-        <div class="hint-box" id="hint-box"></div>
-        <div class="btn-row">
-          <button id="submit-btn" disabled>Submit ↵</button>
-          <button id="clear-btn">✕ Clear</button>
-        </div>
-        <div class="score-guide">
-          <div class="sg-heading">SCORING</div>
-          <div class="sg-row"><span>3 letters</span><b>1 pt</b></div>
-          <div class="sg-row"><span>4 letters</span><b>2 pts</b></div>
-          <div class="sg-row"><span>5 letters</span><b>4 pts</b></div>
-          <div class="sg-row"><span>6 letters</span><b>6 pts</b></div>
-          <div class="sg-row"><span>7 letters</span><b>10 pts</b></div>
-          <div class="sg-row"><span>8 letters</span><b>15 pts</b></div>
-          <div class="sg-row"><span>9 letters</span><b>21 pts</b></div>
-          <div class="sg-row"><span>10+ letters</span><b>28+ pts</b></div>
-        </div>
-      </div>
-
-      <!-- Center: grid -->
-      <div class="grid-panel">
-        <div class="grid" id="grid"></div>
-      </div>
-
-      <!-- Right: word log -->
-      <div class="side-panel right-panel">
-        <div class="panel-title">CLAIMED WORDS</div>
-        <div class="word-log" id="word-log">
-          <div class="log-empty">No words claimed yet</div>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <!-- ══ GAME-OVER OVERLAY ══ -->
-  <div id="gameover-screen" class="overlay hidden">
-    <div class="result-card">
-      <div class="result-emoji" id="result-emoji">🏆</div>
-      <h2 id="result-headline">Game Over</h2>
-      <div class="result-scores" id="result-scores"></div>
-      <button id="play-again-btn">Play Again</button>
-    </div>
-  </div>
-
-  <script src="game.js"></script>
+  <script src="/shared/profile.js"></script>
+  <script src="/hub.js"></script>
 </body>
 </html>
