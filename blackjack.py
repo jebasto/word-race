@@ -15,7 +15,8 @@ INSURANCE_WINDOW   = 15
 RESULT_LINGER      = 8
 DEALER_DRAW_DELAY  = 1.6
 TURN_BANNER_DELAY  = 1.0   # let "X's turn" / "Dealer's turn" banners show
-DEAL_LINGER        = 2.6   # pause after dealing so Blackjack banners are visible
+DEAL_PER_CARD      = 0.45  # per-card delay during the initial deal
+DEAL_LINGER        = 1.6   # pause after dealing so Blackjack banners are visible
 DEALER_STANDS_ON   = 17    # standard: dealer stands on all 17 (incl. soft)
 BLACKJACK_PAYOUT   = 1.5   # 3:2
 INSURANCE_PAYOUT   = 2     # 2:1
@@ -60,6 +61,7 @@ class BlackjackTable:
         self.deck            = make_deck()
         self.dealer          = []           # list[card]
         self.dealer_hole_revealed = False
+        self.dealer_skipped  = False
         self.phase           = 'idle'       # idle | lobby | dealing | insurance | playing | dealer | resolution
         self.phase_deadline  = 0            # epoch ts when current phase auto-ends
         self.lobby_event     = asyncio.Event()
@@ -103,6 +105,7 @@ class BlackjackTable:
             p['pendingAction'] = False
         self.dealer = []
         self.dealer_hole_revealed = False
+        self.dealer_skipped = False
         self.last_action_text = ""
 
     # ---- JSON state ----
@@ -159,6 +162,7 @@ class BlackjackTable:
             'dealerSoft':    dealer_soft,
             'dealerBJ':      dealer_bj,
             'dealerRevealed': self.dealer_hole_revealed,
+            'dealerSkipped':  bool(self.dealer_skipped),
             'players':       players_view,
             'currentPid':    self.current_pid,
             'currentHandIdx': self.current_hand,
@@ -216,16 +220,39 @@ def draw(table: BlackjackTable):
     return table.deck.pop()
 
 def deal_initial(table: BlackjackTable, active_pids):
-    """Deal 2 cards to each active player and the dealer."""
+    """Synchronous full deal — kept for compatibility (not used)."""
     table.dealer = []
     for pid in active_pids:
-        p = table.players[pid]
-        p['hands'][0]['cards'] = []
-    # First card to each, then dealer up, then second to each, then dealer hole
+        table.players[pid]['hands'][0]['cards'] = []
     for _ in range(2):
         for pid in active_pids:
             table.players[pid]['hands'][0]['cards'].append(draw(table))
         table.dealer.append(draw(table))
+
+async def deal_initial_animated(table: BlackjackTable, active_pids):
+    """Deal one card at a time, broadcasting in between so clients animate each card."""
+    table.dealer = []
+    for pid in active_pids:
+        table.players[pid]['hands'][0]['cards'] = []
+    await broadcast_state(table)
+    await asyncio.sleep(DEAL_PER_CARD * 0.4)
+
+    # Round 1: each player, then dealer up
+    for pid in active_pids:
+        table.players[pid]['hands'][0]['cards'].append(draw(table))
+        await broadcast_state(table)
+        await asyncio.sleep(DEAL_PER_CARD)
+    table.dealer.append(draw(table))
+    await broadcast_state(table)
+    await asyncio.sleep(DEAL_PER_CARD)
+
+    # Round 2: each player again, then dealer hole (still hidden)
+    for pid in active_pids:
+        table.players[pid]['hands'][0]['cards'].append(draw(table))
+        await broadcast_state(table)
+        await asyncio.sleep(DEAL_PER_CARD)
+    table.dealer.append(draw(table))
+    await broadcast_state(table)
 
 def player_hand(table, pid, idx=None):
     p = table.players[pid]
@@ -354,8 +381,8 @@ async def play_round(table: BlackjackTable):
     # ── PHASE: dealing ─────────────────────────────────────────────
     table.phase = 'dealing'
     table.phase_deadline = 0
-    deal_initial(table, active)
-    await broadcast_state(table)
+    table.dealer_skipped = False
+    await deal_initial_animated(table, active)
     await asyncio.sleep(DEAL_LINGER)   # lets Blackjack banner play
 
     dealer_up = table.dealer[0]
@@ -435,6 +462,9 @@ async def play_round(table: BlackjackTable):
                 any_live = True; break
         if any_live: break
 
+    table.dealer_skipped = not any_live
+    await broadcast_state(table)
+
     if any_live:
         while True:
             t, soft, _ = hand_value(table.dealer)
@@ -443,6 +473,9 @@ async def play_round(table: BlackjackTable):
             table.dealer.append(draw(table))
             await broadcast_state(table)
             await asyncio.sleep(DEALER_DRAW_DELAY)
+    else:
+        # No live hands — give the "Dealer doesn't play" banner time to read
+        await asyncio.sleep(1.5)
 
     # ── PHASE: resolution ──────────────────────────────────────────
     table.phase = 'resolution'

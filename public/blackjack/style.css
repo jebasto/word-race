@@ -510,6 +510,51 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Dealer's collected chip pile (target for busted/lost bets) */
+.dealer-pile {
+  position: absolute;
+  top: 1.2rem; right: 1rem;
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px;
+  z-index: 1;
+  opacity: 0.85;
+}
+.dealer-pile-stack {
+  width: 32px; height: 22px;
+  border-radius: 6px;
+  background:
+    linear-gradient(to bottom, #444 0%, #444 12%, transparent 12%, transparent 25%,
+                    #555 25%, #555 38%, transparent 38%, transparent 50%,
+                    #666 50%, #666 62%, transparent 62%, transparent 75%,
+                    #777 75%, #777 88%, transparent 88%);
+  border: 1px solid rgba(0,0,0,0.4);
+}
+.dealer-pile-label {
+  font-size: 0.55rem; letter-spacing: 1.5px;
+  color: rgba(255,255,255,0.55);
+  font-weight: 700;
+}
+@media (max-width: 720px) {
+  .dealer-pile { top: 0.5rem; right: 0.4rem; }
+  .dealer-pile-stack { width: 24px; height: 16px; }
+}
+
+/* Bust visual on busted hand */
+.seat-hand.busted {
+  opacity: 0.55;
+  filter: grayscale(0.4);
+}
+.seat-hand.busted::after {
+  content: 'BUST';
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  font-size: 0.6rem; font-weight: 900;
+  color: var(--card-red);
+  background: rgba(255,255,255,0.95);
+  padding: 1px 6px;
+  border-radius: 100px;
+  letter-spacing: 1px;
+}
+
 /* Big turn / Blackjack banner */
 .banner {
   position: fixed;

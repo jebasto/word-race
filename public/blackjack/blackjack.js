@@ -261,8 +261,14 @@ function renderPotSlots() {
   for (const p of state.players || []) {
     if (p.skipRound) continue;
     let total = 0;
-    for (const h of p.hands || []) total += h.bet || 0;
-    if (total > 0 && state.phase !== 'lobby' || (total > 0 && state.phase === 'lobby')) {
+    for (const h of p.hands || []) {
+      // Hands that have already lost (bust / surrender) — chips have moved to dealer
+      const lostAlready = (h.finished && (h.total > 21)) || h.surrendered
+                         || h.result === 'bust' || h.result === 'lose' || h.result === 'surrender';
+      if (lostAlready) continue;
+      total += h.bet || 0;
+    }
+    if (total > 0) {
       want.set(p.id, { name: p.name, total });
     }
   }
@@ -312,10 +318,12 @@ function potSlotEl(pid) {
   return document.querySelector(`.pot-slot[data-pid="${pid}"]`);
 }
 
-// ── Banners (turn change / Blackjack) ──────────────────────────────
-let lastBannerKey = '';
-let bannerTimer   = null;
-let announcedBJs  = new Set();
+// ── Banners (turn change / Blackjack / bust) ──────────────────────
+let lastBannerKey  = '';
+let bannerTimer    = null;
+let announcedBJs   = new Set();
+let announcedBusts = new Set();
+let dealerSkipShown = false;
 
 function showBanner(text, kind = 'normal') {
   const el = $('banner');
@@ -350,6 +358,32 @@ function maybeShowBanner(prev) {
     }
   }
 
+  // Bust announcement (during playing phase, fires the moment a hand busts)
+  if (state.phase === 'playing' || state.phase === 'dealing') {
+    for (const p of state.players || []) {
+      for (let i = 0; i < (p.hands || []).length; i++) {
+        const h = p.hands[i];
+        if (h.finished && h.total > 21) {
+          const key = `bust-${p.id}-${i}-${h.cards.length}`;
+          if (!announcedBusts.has(key)) {
+            announcedBusts.add(key);
+            const who = p.id === myId ? 'YOU' : p.name.toUpperCase();
+            showBanner(`${who} BUSTED!`, 'dealer');
+            // Send chip flying to dealer's pile
+            const slot = potSlotEl(p.id);
+            const target = $('dealer-pile');
+            if (slot && target) {
+              const labels = chipBreakdown(h.bet);
+              labels.forEach((amt, idx) => {
+                setTimeout(() => flyChip(slot, target, '−' + amt, 'loss'), idx * 100);
+              });
+            }
+          }
+        }
+      }
+    }
+  }
+
   // Player turn change
   if (state.phase === 'playing' && state.currentPid) {
     const key = `turn-${state.currentPid}-${state.currentHandIdx}`;
@@ -364,20 +398,28 @@ function maybeShowBanner(prev) {
     return;
   }
 
-  // Dealer turn
+  // Dealer turn  — skipped if all players busted
   if (state.phase === 'dealer') {
-    const key = 'dealer-turn';
-    if (key !== lastBannerKey) {
-      lastBannerKey = key;
-      showBanner("DEALER'S TURN", 'dealer');
+    if (state.dealerSkipped && !dealerSkipShown) {
+      dealerSkipShown = true;
+      showBanner('DEALER STANDS — ALL PLAYERS BUSTED', 'dealer');
+      lastBannerKey = 'dealer-skipped';
+    } else if (!state.dealerSkipped) {
+      const key = 'dealer-turn';
+      if (key !== lastBannerKey) {
+        lastBannerKey = key;
+        showBanner("DEALER'S TURN", 'dealer');
+      }
     }
     return;
   }
 
   // Reset banner key when round resets
   if (state.phase === 'lobby') {
-    lastBannerKey = '';
+    lastBannerKey   = '';
+    dealerSkipShown = false;
     announcedBJs.clear();
+    announcedBusts.clear();
   }
 }
 
@@ -462,8 +504,9 @@ function renderPlayerHands(p) {
         <div class="meta-label">BET</div>
         <div class="meta-value">${h.bet}</div>
       </div>` : '';
+    const busted = h.finished && h.total > 21;
     return `
-      <div class="seat-hand ${isCurrent ? 'current' : ''}" data-pid="${p.id}" data-handidx="${idx}">
+      <div class="seat-hand ${isCurrent ? 'current' : ''} ${busted ? 'busted' : ''}" data-pid="${p.id}" data-handidx="${idx}">
         <div class="seat-hand-cards">${cards}</div>
         <div class="hand-meta">${betBlock}${totalBlock}</div>
         ${result}
