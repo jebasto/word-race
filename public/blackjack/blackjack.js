@@ -564,6 +564,7 @@ function renderActionPanel() {
   const me = (state.players || []).find(p => p.id === myId);
 
   $('bet-ui').classList.add('hidden');
+  $('bet-confirm').classList.add('hidden');
   $('ins-ui').classList.add('hidden');
   $('actions-ui').classList.add('hidden');
   $('idle-msg').textContent = '';
@@ -578,7 +579,9 @@ function renderActionPanel() {
   // Lobby/betting phase
   if (state.phase === 'lobby') {
     if (me.hands.length && me.hands[0].bet > 0) {
-      $('idle-msg').textContent = `Bet placed: ${me.hands[0].bet}. Waiting for others…`;
+      renderBetConfirm(me);
+    } else if (me.sitOutToggle) {
+      renderBetUI(me);   // let them un-toggle sit-out
     } else {
       renderBetUI(me);
     }
@@ -615,6 +618,39 @@ function renderActionPanel() {
   else if (state.phase === 'resolution') $('idle-msg').textContent = 'Hand complete.';
   else if (state.phase === 'idle')   $('idle-msg').textContent = 'Waiting for the next round to begin…';
   else                                $('idle-msg').textContent = '';
+}
+
+function renderBetConfirm(me) {
+  $('bet-confirm').classList.remove('hidden');
+  const myBet = me.hands?.[0]?.bet || 0;
+  $('bet-confirm-amount').textContent = myBet.toLocaleString();
+
+  // Status: who else hasn't bet yet?
+  const pending = (state.players || []).filter(p =>
+    p.id !== me.id && !p.skipRound && !(p.hands?.[0]?.bet > 0)
+  );
+  const status = $('bet-confirm-status');
+  if (pending.length === 0) {
+    status.textContent = 'All bets in — dealing…';
+    status.classList.add('everyone');
+  } else if (pending.length === 1) {
+    status.textContent = `Waiting on ${pending[0].name}…`;
+    status.classList.remove('everyone');
+  } else {
+    status.textContent = `Waiting on ${pending.length} other players…`;
+    status.classList.remove('everyone');
+  }
+
+  // Timer
+  const t = $('bet-confirm-timer');
+  if (state.phaseDeadline > 0) {
+    const left = Math.max(0, Math.ceil(state.phaseDeadline - state.now));
+    t.textContent = left + 's';
+    t.classList.toggle('urgent', left <= 5);
+  } else {
+    t.textContent = '–';
+    t.classList.remove('urgent');
+  }
 }
 
 function renderBetUI(me) {
@@ -719,11 +755,18 @@ $('refill-btn').addEventListener('click', () => {
   location.reload();
 });
 
-// Tick the timer locally between server updates
+// Tick local timer between server updates (phase bar + bet-confirm)
 setInterval(() => {
   if (!state) return;
   state.now = (state.now || 0) + 0.5;
   renderPhaseBar();
+  // Update the bet-confirm countdown if it's visible
+  if (!$('bet-confirm').classList.contains('hidden') && state.phaseDeadline > 0) {
+    const left = Math.max(0, Math.ceil(state.phaseDeadline - state.now));
+    const t = $('bet-confirm-timer');
+    t.textContent = left + 's';
+    t.classList.toggle('urgent', left <= 5);
+  }
 }, 500);
 
 function esc(s) {

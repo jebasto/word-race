@@ -62,6 +62,22 @@
 
     <!-- Action panel -->
     <div class="action-panel" id="action-panel">
+      <!-- Bet placed confirmation (shown after my bet, before round starts) -->
+      <div id="bet-confirm" class="bet-confirm hidden">
+        <div class="bet-confirm-row">
+          <div class="bet-confirm-tick">✓</div>
+          <div class="bet-confirm-info">
+            <div class="bet-confirm-label">YOUR BET</div>
+            <div class="bet-confirm-amount" id="bet-confirm-amount">0</div>
+          </div>
+          <div class="bet-confirm-info">
+            <div class="bet-confirm-label">STARTS IN</div>
+            <div class="bet-confirm-timer" id="bet-confirm-timer">15s</div>
+          </div>
+        </div>
+        <div class="bet-confirm-status" id="bet-confirm-status">Waiting for other players to bet…</div>
+      </div>
+
       <!-- Bet UI -->
       <div id="bet-ui" class="bet-ui hidden">
         <div class="bet-presets">

@@ -1,27 +1,37 @@
-// Shared 2D platformer engine — used by Dharani and Mariappa.
-// Tile-based, AABB collisions, camera-follow, keyboard + touch input.
+// Shared 2D platformer engine — used by Don and Mangaatha.
+// Tile-based, AABB collisions, camera-follow, smooth input with coyote-time
+// and variable jump height, themed sprite drawing.
 //
-// Usage:
-//   const game = new Platformer({ canvas, level, theme, onWin, onLose });
-//   game.start();
+// Tile chars (default):
+//   . air     X solid     _ solid (grass top)   # solid (decorative)
+//   P player start    G goal/door    C cup (pickup)
+//   * coin             E walker enemy            F fast enemy
+//   B boss enemy       S spike strip             R rescue NPC
 
 class Platformer {
   constructor(opts) {
     this.canvas = opts.canvas;
     this.ctx    = this.canvas.getContext('2d');
     this.theme  = opts.theme || {};
-    this.onWin  = opts.onWin  || (() => {});
-    this.onLose = opts.onLose || (() => {});
-    this.onScore= opts.onScore|| (() => {});
-    this.onLives= opts.onLives|| (() => {});
+    this.requireCup = !!opts.requireCup;
+    this.onWin    = opts.onWin    || (() => {});
+    this.onLose   = opts.onLose   || (() => {});
+    this.onScore  = opts.onScore  || (() => {});
+    this.onLives  = opts.onLives  || (() => {});
+    this.onCup    = opts.onCup    || (() => {});
 
     // Geometry
     this.tile = 36;
-    this.gravity = 0.65;
-    this.jumpV   = -12.5;
-    this.moveAcc = 0.6;
-    this.maxRun  = 4.2;
-    this.friction= 0.82;
+    this.gravity   = 0.62;
+    this.jumpV     = -13.0;
+    this.jumpCut   = 0.45;        // velocity multiplier when jump released early
+    this.moveAcc   = 0.95;
+    this.maxRun    = 5.5;
+    this.airAcc    = 0.55;
+    this.friction  = 0.78;
+
+    this.coyoteFrames = 6;        // can still jump for N frames after leaving ground
+    this.bufferFrames = 8;        // queued jump press valid for N frames
 
     // State
     this.keys = {};
@@ -31,11 +41,15 @@ class Platformer {
     this.won = false;
     this.lives = 3;
     this.score = 0;
+    this.cupTaken = !this.requireCup;
+    this._jumpHeld = false;
+    this._coyote = 0;
+    this._jumpBuffer = 0;
+    this._screenShake = 0;
 
     this._load(opts.level || '');
     this._bindInput();
     this._raf = null;
-    this._lastT = 0;
   }
 
   _load(levelStr) {
@@ -46,7 +60,10 @@ class Platformer {
 
     this.coins   = [];
     this.enemies = [];
+    this.bosses  = [];
     this.spikes  = [];
+    this.cups    = [];
+    this.npcs    = [];
     this.goal    = null;
     this.startX  = 0;
     this.startY  = 0;
@@ -54,26 +71,33 @@ class Platformer {
     for (let y = 0; y < this.rows; y++) {
       for (let x = 0; x < this.cols; x++) {
         const c = this.tiles[y][x];
-        if (c === 'P') { this.startX = x * this.tile; this.startY = y * this.tile; this.tiles[y][x] = '.'; }
-        else if (c === '*') { this.coins.push({ x: x*this.tile + this.tile/2, y: y*this.tile + this.tile/2, taken: false }); this.tiles[y][x] = '.'; }
-        else if (c === 'E') { this.enemies.push({ x: x*this.tile, y: y*this.tile, w: this.tile-4, h: this.tile-2, vx: -1.2, alive: true, kind: 'walker' }); this.tiles[y][x] = '.'; }
-        else if (c === 'F') { this.enemies.push({ x: x*this.tile, y: y*this.tile, w: this.tile-4, h: this.tile-2, vx: -1.8, alive: true, kind: 'fast'   }); this.tiles[y][x] = '.'; }
-        else if (c === 'S') { this.spikes.push({ x: x*this.tile, y: y*this.tile + this.tile - 12, w: this.tile, h: 12 }); this.tiles[y][x] = '.'; }
-        else if (c === 'G') { this.goal = { x: x*this.tile, y: y*this.tile - this.tile, w: this.tile, h: this.tile*2 }; this.tiles[y][x] = '.'; }
+        const px = x * this.tile, py = y * this.tile;
+        if (c === 'P')      { this.startX = px; this.startY = py; this.tiles[y][x] = '.'; }
+        else if (c === '*') { this.coins.push({ x: px + this.tile/2, y: py + this.tile/2, taken: false }); this.tiles[y][x] = '.'; }
+        else if (c === 'C') { this.cups.push({ x: px + this.tile/2, y: py + this.tile/2, taken: false }); this.tiles[y][x] = '.'; }
+        else if (c === 'E') { this.enemies.push({ x: px, y: py, w: this.tile-4, h: this.tile-2, vx: -1.4, alive: true, kind: 'walker', hp: 1 }); this.tiles[y][x] = '.'; }
+        else if (c === 'F') { this.enemies.push({ x: px, y: py, w: this.tile-4, h: this.tile-2, vx: -2.2, alive: true, kind: 'fast',   hp: 1 }); this.tiles[y][x] = '.'; }
+        else if (c === 'B') { this.enemies.push({ x: px, y: py - this.tile, w: this.tile + 4, h: this.tile*2 - 2, vx: -1.0, alive: true, kind: 'boss',   hp: 3 }); this.tiles[y][x] = '.'; }
+        else if (c === 'S') { this.spikes.push({ x: px, y: py + this.tile - 12, w: this.tile, h: 12 }); this.tiles[y][x] = '.'; }
+        else if (c === 'R') { this.npcs.push({ x: px, y: py - this.tile/2, w: this.tile, h: this.tile + this.tile/2, kind: 'rescue' }); this.tiles[y][x] = '.'; }
+        else if (c === 'G') { this.goal = { x: px, y: py - this.tile, w: this.tile, h: this.tile*2 }; this.tiles[y][x] = '.'; }
       }
     }
 
     this.player = {
       x: this.startX, y: this.startY,
-      w: 24, h: 38,
+      w: 26, h: 44,
       vx: 0, vy: 0,
       onGround: false,
       facing: 1,
       hurt: 0,
+      walkPhase: 0,
     };
 
-    this.canvas.width  = Math.min(900, window.innerWidth - 16);
-    this.canvas.height = Math.min(520, this.rows * this.tile);
+    // Canvas sized to viewport
+    const w = Math.min(900, window.innerWidth - 16);
+    this.canvas.width  = w;
+    this.canvas.height = Math.min(540, this.rows * this.tile);
   }
 
   isSolid(c) { return c === 'X' || c === '_' || c === '#'; }
@@ -87,18 +111,27 @@ class Platformer {
 
   _bindInput() {
     window.addEventListener('keydown', e => {
+      const blocked = ['ArrowUp','Space','KeyW','ArrowLeft','ArrowRight','KeyA','KeyD','ArrowDown','KeyS'].includes(e.code);
+      if (e.repeat) {
+        if (blocked) e.preventDefault();
+        return;
+      }
       this.keys[e.code] = true;
-      if (['ArrowUp','Space','KeyW','ArrowLeft','ArrowRight','KeyA','KeyD'].includes(e.code)) e.preventDefault();
+      if (['ArrowUp','Space','KeyW'].includes(e.code)) this._jumpBuffer = this.bufferFrames;
+      if (blocked) e.preventDefault();
     }, { passive: false });
-    window.addEventListener('keyup', e => this.keys[e.code] = false);
-    // Touch buttons (set up by host page)
+    window.addEventListener('keyup', e => {
+      this.keys[e.code] = false;
+      if (['ArrowUp','Space','KeyW'].includes(e.code)) this._jumpHeld = false;
+    });
+    window.addEventListener('blur', () => { this.keys = {}; this._jumpHeld = false; });
   }
 
   _input() {
     const left  = this.keys['ArrowLeft']  || this.keys['KeyA'] || this.touch.left;
     const right = this.keys['ArrowRight'] || this.keys['KeyD'] || this.touch.right;
-    const jump  = this.keys['ArrowUp']    || this.keys['KeyW'] || this.keys['Space'] || this.touch.jump;
-    return { left, right, jump };
+    const jumpDown = this.keys['ArrowUp'] || this.keys['KeyW'] || this.keys['Space'] || this.touch.jump;
+    return { left, right, jumpDown };
   }
 
   _physics() {
@@ -106,32 +139,69 @@ class Platformer {
     const inp = this._input();
     const p = this.player;
 
-    if (inp.left)  { p.vx -= this.moveAcc; p.facing = -1; }
-    if (inp.right) { p.vx += this.moveAcc; p.facing = 1; }
-    if (!inp.left && !inp.right) p.vx *= this.friction;
+    // Horizontal acceleration (more in air? no, less, for control)
+    const acc = p.onGround ? this.moveAcc : this.airAcc;
+    if (inp.left  && !inp.right) { p.vx -= acc; p.facing = -1; }
+    if (inp.right && !inp.left)  { p.vx += acc; p.facing =  1; }
+    if (!inp.left && !inp.right && p.onGround) p.vx *= this.friction;
+    if (Math.abs(p.vx) < 0.08) p.vx = 0;
     p.vx = Math.max(-this.maxRun, Math.min(this.maxRun, p.vx));
-    if (Math.abs(p.vx) < 0.05) p.vx = 0;
 
-    if (inp.jump && p.onGround) { p.vy = this.jumpV; p.onGround = false; }
+    // Coyote/buffer + variable jump height
+    if (this._jumpBuffer > 0) this._jumpBuffer--;
+    if (this._coyote > 0) this._coyote--;
+
+    if (inp.jumpDown && !this._jumpHeld) {
+      this._jumpHeld = true;
+      // Buffered or coyote jump
+      if (p.onGround || this._coyote > 0) {
+        p.vy = this.jumpV;
+        p.onGround = false;
+        this._coyote = 0;
+        this._jumpBuffer = 0;
+      } else {
+        this._jumpBuffer = this.bufferFrames;
+      }
+    }
+
+    // Jump-cut: if released while still rising, cut velocity
+    if (!inp.jumpDown && p.vy < 0) p.vy *= this.jumpCut;
+
+    // Gravity
     p.vy += this.gravity;
-    if (p.vy > 14) p.vy = 14;
+    if (p.vy > 16) p.vy = 16;
 
-    // Horizontal move + collide
+    // Move + collide horizontally
     p.x += p.vx;
     this._collideAxis('x');
 
-    // Vertical move + collide
+    // Move + collide vertically
+    const wasOnGround = p.onGround;
     p.y += p.vy;
     p.onGround = false;
     this._collideAxis('y');
 
+    // Coyote time: just stepped off the edge
+    if (wasOnGround && !p.onGround && p.vy >= 0) this._coyote = this.coyoteFrames;
+
+    // Use buffered jump if landed
+    if (p.onGround && this._jumpBuffer > 0) {
+      p.vy = this.jumpV;
+      p.onGround = false;
+      this._jumpBuffer = 0;
+    }
+
+    // Walk animation phase
+    if (p.onGround && Math.abs(p.vx) > 0.5) p.walkPhase += Math.abs(p.vx) * 0.15;
+    else p.walkPhase = 0;
+
     // Fall off world?
     if (p.y > this.rows * this.tile + 200) this._die();
 
-    // Collisions: enemies, coins, spikes, goal
+    // Entity collisions
     this._collideEntities();
 
-    // Camera
+    // Camera follow with deadzone
     const targetCam = p.x - this.canvas.width / 2 + p.w / 2;
     this.cameraX = Math.max(0, Math.min(this.cols * this.tile - this.canvas.width, targetCam));
 
@@ -139,15 +209,14 @@ class Platformer {
     for (const e of this.enemies) {
       if (!e.alive) continue;
       e.x += e.vx;
-      // turn at wall or edge
-      const probeX = e.vx > 0 ? e.x + e.w : e.x - 1;
-      const probeY = e.y + e.h + 2;
-      const ahead = this.tileAt(probeX, e.y + e.h / 2);
-      const below = this.tileAt(probeX + (e.vx > 0 ? 0 : 0), probeY);
+      const probeX = e.vx > 0 ? e.x + e.w + 1 : e.x - 1;
+      const ahead  = this.tileAt(probeX, e.y + e.h / 2);
+      const below  = this.tileAt(probeX, e.y + e.h + 2);
       if (this.isSolid(ahead) || !this.isSolid(below)) e.vx *= -1;
     }
 
     if (p.hurt > 0) p.hurt--;
+    if (this._screenShake > 0) this._screenShake--;
   }
 
   _collideAxis(axis) {
@@ -162,12 +231,12 @@ class Platformer {
         if (!this.isSolid(this.tiles[ty][tx])) continue;
         const bx = tx * this.tile, by = ty * this.tile;
         if (axis === 'x') {
-          if (p.vx > 0) p.x = bx - p.w;
+          if (p.vx > 0)      p.x = bx - p.w;
           else if (p.vx < 0) p.x = bx + this.tile;
           p.vx = 0;
         } else {
-          if (p.vy > 0) { p.y = by - p.h; p.onGround = true; }
-          else if (p.vy < 0) p.y = by + this.tile;
+          if (p.vy > 0)      { p.y = by - p.h; p.onGround = true; }
+          else if (p.vy < 0) { p.y = by + this.tile; }
           p.vy = 0;
         }
       }
@@ -181,21 +250,41 @@ class Platformer {
       if (c.taken) continue;
       const dx = (p.x + p.w/2) - c.x;
       const dy = (p.y + p.h/2) - c.y;
-      if (dx*dx + dy*dy < 24*24) {
+      if (dx*dx + dy*dy < 26*26) {
         c.taken = true;
         this.score += 10;
         this.onScore(this.score);
       }
     }
 
+    for (const c of this.cups) {
+      if (c.taken) continue;
+      const dx = (p.x + p.w/2) - c.x;
+      const dy = (p.y + p.h/2) - c.y;
+      if (dx*dx + dy*dy < 32*32) {
+        c.taken = true;
+        this.cupTaken = true;
+        this.score += 50;
+        this.onScore(this.score);
+        this.onCup(true);
+      }
+    }
+
     for (const e of this.enemies) {
       if (!e.alive) continue;
       if (this._aabb(p, e)) {
-        // Stomp from above?
-        if (p.vy > 2 && (p.y + p.h - e.y) < 14) {
-          e.alive = false;
+        // Stomp from above (must be falling fast enough)?
+        const stomp = p.vy > 3 && (p.y + p.h - e.y) < 18;
+        if (stomp) {
+          e.hp--;
           p.vy = this.jumpV * 0.7;
-          this.score += 25;
+          if (e.hp <= 0) {
+            e.alive = false;
+            this.score += (e.kind === 'boss') ? 200 : 25;
+          } else {
+            this.score += 15;
+            e.vx *= -1;          // stagger boss
+          }
           this.onScore(this.score);
         } else if (p.hurt === 0) {
           this._hurt();
@@ -208,6 +297,7 @@ class Platformer {
     }
 
     if (this.goal && this._aabb(p, this.goal) && !this.won) {
+      if (this.requireCup && !this.cupTaken) return;   // door locked
       this.won = true;
       this.gameOver = true;
       setTimeout(() => this.onWin(this.score), 100);
@@ -219,11 +309,13 @@ class Platformer {
   }
 
   _hurt() {
-    this.player.hurt = 60;
+    const p = this.player;
+    p.hurt = 90;                 // 1.5s invulnerability
     this.lives--;
     this.onLives(this.lives);
-    this.player.vy = -8;
-    this.player.vx = -this.player.facing * 5;
+    p.vy = -9;
+    p.vx = -p.facing * 6;
+    this._screenShake = 12;
     if (this.lives <= 0) this._die();
   }
 
@@ -234,31 +326,41 @@ class Platformer {
   }
 
   reset() {
-    this.player.x = this.startX;
-    this.player.y = this.startY;
-    this.player.vx = 0; this.player.vy = 0;
-    this.player.hurt = 0;
+    const p = this.player;
+    p.x = this.startX; p.y = this.startY;
+    p.vx = 0; p.vy = 0;
+    p.hurt = 0; p.walkPhase = 0; p.facing = 1;
     this.lives = 3;
     this.score = 0;
     this.gameOver = false;
     this.won = false;
-    for (const c of this.coins) c.taken = false;
-    for (const e of this.enemies) e.alive = true;
+    this.cupTaken = !this.requireCup;
+    this._coyote = 0; this._jumpBuffer = 0; this._jumpHeld = false;
+    for (const c of this.coins)   c.taken = false;
+    for (const c of this.cups)    c.taken = false;
+    for (const e of this.enemies) { e.alive = true; e.hp = e.kind === 'boss' ? 3 : 1; }
     this.onScore(0);
     this.onLives(this.lives);
+    this.onCup(false);
   }
 
-  _render() {
-    const ctx = this.ctx;
-    const T = this.theme;
+  _render(t) {
+    const ctx = this.ctx, T = this.theme;
     const W = this.canvas.width, H = this.canvas.height;
 
-    // Background — themed
-    if (T.bg)        T.bg(ctx, W, H, this.cameraX);
-    else { ctx.fillStyle = '#7ad0ff'; ctx.fillRect(0, 0, W, H); }
+    // Background
+    if (T.bg) T.bg(ctx, W, H, this.cameraX);
+    else { ctx.fillStyle = '#7ad0ff'; ctx.fillRect(0,0,W,H); }
+
+    // Screen shake
+    let shakeX = 0, shakeY = 0;
+    if (this._screenShake > 0) {
+      shakeX = (Math.random() - 0.5) * 6;
+      shakeY = (Math.random() - 0.5) * 6;
+    }
 
     ctx.save();
-    ctx.translate(-this.cameraX, 0);
+    ctx.translate(-this.cameraX + shakeX, shakeY);
 
     // Tiles
     const startCol = Math.max(0, Math.floor(this.cameraX / this.tile));
@@ -274,19 +376,25 @@ class Platformer {
     }
 
     // Goal
-    if (this.goal && T.goal) T.goal(ctx, this.goal);
+    if (this.goal && T.goal) T.goal(ctx, this.goal, this.cupTaken, t);
+
+    // NPCs (rescue target etc.)
+    for (const n of this.npcs) if (T.npc) T.npc(ctx, n, t);
+
+    // Cups
+    for (const c of this.cups) if (!c.taken && T.cup) T.cup(ctx, c, t);
 
     // Coins
-    for (const c of this.coins) if (!c.taken && T.coin) T.coin(ctx, c, performance.now());
+    for (const c of this.coins) if (!c.taken && T.coin) T.coin(ctx, c, t);
 
     // Spikes
     for (const s of this.spikes) if (T.spike) T.spike(ctx, s);
 
     // Enemies
-    for (const e of this.enemies) if (e.alive && T.enemy) T.enemy(ctx, e, performance.now());
+    for (const e of this.enemies) if (e.alive && T.enemy) T.enemy(ctx, e, t);
 
     // Player
-    if (T.player) T.player(ctx, this.player, performance.now());
+    if (T.player) T.player(ctx, this.player, t);
     else {
       ctx.fillStyle = '#ff6584';
       ctx.fillRect(this.player.x, this.player.y, this.player.w, this.player.h);
@@ -299,7 +407,7 @@ class Platformer {
     cancelAnimationFrame(this._raf);
     const tick = (t) => {
       this._physics();
-      this._render();
+      this._render(t);
       this._raf = requestAnimationFrame(tick);
     };
     this._raf = requestAnimationFrame(tick);

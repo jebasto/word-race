@@ -9,7 +9,7 @@ from typing import Optional
 # ── Rules ──────────────────────────────────────────────────────────
 MIN_BET            = 50
 MAX_PLAYERS        = 4
-LOBBY_WINDOW       = 20    # seconds: join + bet
+LOBBY_WINDOW       = 15    # seconds after first bet for others to bet
 TURN_WINDOW        = 30    # seconds per decision
 INSURANCE_WINDOW   = 15
 RESULT_LINGER      = 8
