@@ -130,24 +130,47 @@ function resetL2() {
   L2.painting.x = (px + 0.5) * L2.CELL;
   L2.painting.y = (py + 0.5) * L2.CELL;
 
-  // Spawn 3 guards at random open cells (not start, not painting)
-  for (let i = 0; i < 3; i++) {
-    const cell = pickRandomOpen(L2.grid, reach,
-      [[1,1], [px, py], ...L2.guards.map(g => [g.gx, g.gy])]);
-    if (!cell) break;
+  // Spawn 3 guards. Each guard picked from cells far enough from the start
+  // so the player is never detected the moment the level loads.
+  // Vision range: 2 guards see only 1 cell (50px). 1 guard ("captain") sees 2 cells (100px).
+  const MIN_SPAWN_DIST = 5;   // Manhattan distance, in cells
+  const MIN_WAYPOINT_DIST = 4;
+  const reachArr = [...reach].map(k => k.split(',').map(Number));
+  const farFromStart = (cell) =>
+    (Math.abs(cell[0] - 1) + Math.abs(cell[1] - 1)) >= MIN_SPAWN_DIST;
+  const pickFar = (excluded, minD = MIN_SPAWN_DIST) => {
+    const candidates = reachArr.filter(([x, y]) => {
+      if ((Math.abs(x - 1) + Math.abs(y - 1)) < minD) return false;
+      if (x === px && y === py) return false;
+      if (excluded.some(([ex, ey]) => ex === x && ey === y)) return false;
+      return true;
+    });
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  };
+
+  const guardSpecs = [
+    { range: 1.2, speed: 0.9 },     // 1-cell vision (forgiving)
+    { range: 1.2, speed: 0.85 },
+    { range: 2.0, speed: 1.05 },    // captain — 2-cell vision
+  ];
+  for (const spec of guardSpecs) {
+    const taken = L2.guards.map(g => [g.gx, g.gy]);
+    const cell = pickFar(taken);
+    if (!cell) continue;
     const [gx, gy] = cell;
-    // Generate 2 patrol waypoints
-    const wp1 = pickRandomOpen(L2.grid, reach, [[1,1], [px, py]]);
-    const wp2 = pickRandomOpen(L2.grid, reach, [[1,1], [px, py], wp1]);
+    const wp1 = pickFar([[gx, gy], ...taken], MIN_WAYPOINT_DIST);
+    const wp2 = pickFar([[gx, gy], wp1, ...taken].filter(Boolean), MIN_WAYPOINT_DIST);
     L2.guards.push({
       gx, gy,
       x: (gx + 0.5) * L2.CELL,
       y: (gy + 0.5) * L2.CELL,
       waypoints: [wp1, wp2].filter(Boolean),
       wpIdx: 0,
-      pauseT: 30,
+      pauseT: 30 + Math.floor(Math.random() * 30),
       dir: Math.random() * Math.PI * 2,
-      speed: 0.9 + Math.random() * 0.5,
+      speed: spec.speed,
+      range: spec.range,    // visibility radius in cells
     });
   }
 }
@@ -262,15 +285,15 @@ function wrapAngle(a) {
   return a;
 }
 
-// 60° cone (±30° from facing), 4 cells deep, with line-of-sight raycast
+// 60° cone (±30° from facing), per-guard range in cells, with line-of-sight raycast
 function canSee(g, tx, ty) {
   const dx = tx - g.x, dy = ty - g.y;
   const dist = Math.hypot(dx, dy);
-  if (dist > 4 * L2.CELL) return false;
+  const range = (g.range || 2) * L2.CELL;
+  if (dist > range) return false;
   const ang = Math.atan2(dy, dx);
   const da = Math.abs(wrapAngle(ang - g.dir));
-  if (da > Math.PI / 6) return false;   // 60° total cone (±30°)
-  // Raycast for walls
+  if (da > Math.PI / 6) return false;
   const steps = Math.ceil(dist / 6);
   for (let i = 1; i < steps; i++) {
     const t = i / steps;
@@ -405,12 +428,14 @@ function drawPainting(cx, x, y, t) {
 }
 
 function drawGuardCone(cx, g) {
-  const range = 4 * L2.CELL;
+  const range = (g.range || 2) * L2.CELL;
   cx.save();
   cx.translate(g.x, g.y);
   cx.rotate(g.dir);
+  // Slight tint difference for the captain (longer range) — readable for the player
+  const intense = (g.range >= 2) ? 0.42 : 0.28;
   const grd = cx.createRadialGradient(0, 0, 4, 0, 0, range);
-  grd.addColorStop(0, 'rgba(255,220,80,0.32)');
+  grd.addColorStop(0, `rgba(255,220,80,${intense})`);
   grd.addColorStop(1, 'rgba(255,220,80,0)');
   cx.fillStyle = grd;
   cx.beginPath();
@@ -418,61 +443,176 @@ function drawGuardCone(cx, g) {
   cx.arc(0, 0, range, -Math.PI/6, Math.PI/6);
   cx.closePath();
   cx.fill();
+  // Outline edge so the player can read the cone shape clearly
+  cx.strokeStyle = 'rgba(255,200,40,0.55)';
+  cx.lineWidth = 1.2;
+  cx.beginPath();
+  cx.moveTo(0, 0);
+  cx.arc(0, 0, range, -Math.PI/6, Math.PI/6);
+  cx.closePath();
+  cx.stroke();
   cx.restore();
 }
 
+// Guard — top-down with visible head, cap brim, shoulders, flashlight
 function drawGuardTopDown(cx, g, t) {
+  const isCaptain = g.range >= 2;
   cx.save();
   cx.translate(g.x, g.y);
   cx.rotate(g.dir);
-  // Shadow
-  cx.fillStyle = 'rgba(0,0,0,0.4)';
-  cx.beginPath(); cx.ellipse(0, 4, 14, 6, 0, 0, Math.PI*2); cx.fill();
-  // Body (uniform)
-  ol(cx, () => { cx.beginPath(); cx.arc(0, 0, 12, 0, Math.PI*2); }, '#1a3a5a');
-  // Head (top-down circle on body)
-  ol(cx, () => { cx.beginPath(); cx.arc(2, 0, 7, 0, Math.PI*2); }, SK, 1.5);
-  // Cap
+
+  // Cast shadow on the floor
+  cx.fillStyle = 'rgba(0,0,0,0.45)';
+  cx.beginPath(); cx.ellipse(0, 6, 16, 6, 0, 0, Math.PI * 2); cx.fill();
+
+  // Shoulders/torso plate (perpendicular ovals so they visually sit on either side)
   cx.fillStyle = '#0a1a3a';
-  cx.beginPath(); cx.arc(2, 0, 7, -Math.PI/2 - 0.6, -Math.PI/2 + 0.6); cx.fill();
-  cx.fillRect(-2, -8, 8, 3);
-  // Flashlight cone tip
+  cx.strokeStyle = BL; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.ellipse(0, -10, 6, 4, 0, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.beginPath(); cx.ellipse(0,  10, 6, 4, 0, 0, Math.PI * 2); cx.fill(); cx.stroke();
+
+  // Body — navy uniform
+  ol(cx, () => { cx.beginPath(); cx.arc(0, 0, 12, 0, Math.PI * 2); }, '#1f4670');
+
+  // Yellow belt + buckle
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(0, 0, 12, -Math.PI / 6, Math.PI / 6); cx.stroke();
   cx.fillStyle = '#F4C430';
-  cx.beginPath(); cx.arc(11, 0, 3, 0, Math.PI*2); cx.fill();
+  cx.beginPath(); cx.arc(12, 0, 1.8, 0, Math.PI * 2); cx.fill();
+
+  // Captain rank stripe on body
+  if (isCaptain) {
+    cx.fillStyle = '#F4C430';
+    cx.fillRect(-8, -2, 4, 1.5);
+    cx.fillRect(-8,  1, 4, 1.5);
+  }
+
+  // Head (skin)
+  ol(cx, () => { cx.beginPath(); cx.arc(3, 0, 7, 0, Math.PI * 2); }, SK, 1.5);
+
+  // Cap dome (back of head only — front shows face)
+  cx.fillStyle = isCaptain ? '#7d2f2f' : '#0a1a3a';
+  cx.beginPath();
+  cx.arc(3, 0, 7, Math.PI / 2 + 0.2, -Math.PI / 2 - 0.2, true);
+  cx.fill();
+  cx.strokeStyle = BL; cx.lineWidth = 1; cx.stroke();
+
+  // Cap brim (the "visor" pointing forward)
+  cx.fillStyle = isCaptain ? '#5a1f1f' : '#000';
+  cx.beginPath();
+  cx.moveTo(8, -4); cx.lineTo(13, -3); cx.lineTo(13, 3); cx.lineTo(8, 4); cx.closePath();
+  cx.fill();
+  cx.strokeStyle = BL; cx.lineWidth = 1; cx.stroke();
+
+  // Cap badge
+  cx.fillStyle = '#F4C430';
+  cx.beginPath(); cx.arc(2, -3.5, 1.4, 0, Math.PI * 2); cx.fill();
+
+  // Tiny mustache
+  cx.fillStyle = BL;
+  cx.fillRect(6, -1.5, 3, 1);
+  cx.fillRect(6,  0.5, 3, 1);
+
+  // Flashlight in forward hand
+  cx.fillStyle = '#222';
+  cx.fillRect(13, -3, 7, 6);
+  cx.strokeStyle = BL; cx.lineWidth = 1;
+  cx.strokeRect(13, -3, 7, 6);
+  // Glow tip
+  const tip = cx.createRadialGradient(22, 0, 1, 22, 0, 5);
+  tip.addColorStop(0, '#FFF');
+  tip.addColorStop(1, '#F4C430');
+  cx.fillStyle = tip;
+  cx.beginPath(); cx.arc(22, 0, 4, 0, Math.PI * 2); cx.fill();
+
+  // CAPTAIN tag floating below
+  if (isCaptain) {
+    cx.rotate(-g.dir);   // un-rotate so text is upright
+    cx.fillStyle = '#FFF8E0';
+    cx.font = 'bold 8px sans-serif';
+    cx.textAlign = 'center';
+    cx.fillText('CAPTAIN', 0, 24);
+    cx.textAlign = 'left';
+  }
+
   cx.restore();
 }
 
+// Muru top-down — readable miniature: shirt + dhoti + head + tuft + mustache
+// Direction-aware via cx.rotate(dir).
 function drawMuruTopDown(cx, x, y, dir, t, hasPainting) {
+  // Stepping animation — pulsing scale for a sense of running
+  const speedy = (Math.abs(L2.player?.x ? 1 : 1));
+  const step = Math.sin(t * 0.4) * 0.04;
   cx.save();
   cx.translate(x, y);
-  // Shadow
+  cx.rotate(dir);
+  cx.scale(1 + step, 1 - step);
+
+  // Cast shadow
   cx.fillStyle = 'rgba(0,0,0,0.5)';
-  cx.beginPath(); cx.ellipse(0, 4, 14, 6, 0, 0, Math.PI*2); cx.fill();
-  // Body (red shirt)
-  ol(cx, () => { cx.beginPath(); cx.arc(0, 0, 13, 0, Math.PI*2); }, '#C0392B');
-  // Dhoti (cream center stripe)
+  cx.beginPath(); cx.ellipse(0, 6, 13, 5, 0, 0, Math.PI * 2); cx.fill();
+
+  // Cream dhoti (lower body) — drawn behind the torso
   cx.fillStyle = '#FFFFF0';
-  cx.beginPath(); cx.arc(0, 0, 8, 0, Math.PI*2); cx.fill();
-  // Head
-  cx.save(); cx.rotate(dir);
-  ol(cx, () => { cx.beginPath(); cx.arc(2, 0, 7, 0, Math.PI*2); }, SK, 1.5);
-  // Tuft of hair
+  cx.strokeStyle = BL; cx.lineWidth = 1.2;
+  cx.beginPath();
+  cx.ellipse(-4, 6, 5, 4, 0, 0, Math.PI * 2);
+  cx.fill(); cx.stroke();
+  cx.beginPath();
+  cx.ellipse(4, 6, 5, 4, 0, 0, Math.PI * 2);
+  cx.fill(); cx.stroke();
+  // Gold dhoti border
+  cx.strokeStyle = '#C8900A'; cx.lineWidth = 1.2;
+  cx.beginPath(); cx.arc(-4, 6, 5, 0, Math.PI * 2); cx.stroke();
+  cx.beginPath(); cx.arc(4, 6, 5, 0, Math.PI * 2); cx.stroke();
+
+  // Body — red shirt
+  ol(cx, () => { cx.beginPath(); cx.arc(0, 0, 11, 0, Math.PI * 2); }, '#C0392B');
+
+  // Gold chain hint
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 1.2;
+  cx.beginPath(); cx.arc(2, 0, 6, -Math.PI / 4, Math.PI / 4); cx.stroke();
+
+  // Arms — small ovals on the sides, pumping with step
+  cx.fillStyle = SK; cx.strokeStyle = BL; cx.lineWidth = 1;
+  const armSwing = Math.sin(t * 0.4) * 1.5;
+  cx.beginPath(); cx.ellipse(-1, -10 - armSwing, 3, 4, 0, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.beginPath(); cx.ellipse(-1,  10 + armSwing, 3, 4, 0, 0, Math.PI * 2); cx.fill(); cx.stroke();
+
+  // Head (skin)
+  ol(cx, () => { cx.beginPath(); cx.arc(3, 0, 6.5, 0, Math.PI * 2); }, SK, 1.4);
+
+  // Hair (back of head — rotated so the FACE points forward)
   cx.fillStyle = BL;
-  cx.beginPath(); cx.arc(2, 0, 7, -Math.PI/2 - 0.7, -Math.PI/2 + 0.4); cx.fill();
-  // Mustache / face hint
+  cx.beginPath();
+  cx.arc(3, 0, 6.5, Math.PI / 2 + 0.2, -Math.PI / 2 - 0.2, true);
+  cx.fill();
+
+  // Eyes — two tiny dots on the front of the face
   cx.fillStyle = BL;
-  cx.fillRect(5, -2, 3, 1);
-  cx.fillRect(5, 1, 3, 1);
-  cx.restore();
-  // Painting tube on back if grabbed
+  cx.beginPath(); cx.arc(7, -2, 0.9, 0, Math.PI * 2); cx.fill();
+  cx.beginPath(); cx.arc(7,  2, 0.9, 0, Math.PI * 2); cx.fill();
+
+  // Mustache (forward tip of face)
+  cx.fillStyle = BL;
+  cx.fillRect(7, -1, 3, 1);
+  cx.fillRect(7,  0, 3, 1);
+
+  // Painting tube — strapped diagonally across his back
   if (hasPainting) {
-    cx.save(); cx.rotate(dir + Math.PI);
     cx.fillStyle = '#F4C430';
-    cx.fillRect(-4, -10, 8, 6);
-    cx.strokeStyle = BL; cx.lineWidth = 1;
-    cx.strokeRect(-4, -10, 8, 6);
+    cx.strokeStyle = BL; cx.lineWidth = 1.2;
+    cx.save();
+    cx.rotate(-Math.PI / 6);
+    cx.fillRect(-12, -3, 14, 5);
+    cx.strokeRect(-12, -3, 14, 5);
+    cx.fillStyle = '#7A4014';
+    cx.fillRect(-13, -3, 2, 5);
+    cx.fillRect(0, -3, 2, 5);
     cx.restore();
   }
+
   cx.restore();
 }
 

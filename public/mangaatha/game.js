@@ -205,6 +205,7 @@ function enterGame() {
   }
   G.active.init(api);
   G.paused = false;
+  _lastFrame = 0; _accumulator = 0;
   $('pause-overlay').classList.add('hidden');
   updateLivesHud();
   updateProgressHud();
@@ -214,18 +215,38 @@ function enterGame() {
   gameLoop();
 }
 
-function gameLoop() {
-  if (!G.paused) G.active.update(api);
+// Fixed-timestep game loop. requestAnimationFrame fires at the display
+// refresh rate — 60Hz on most laptops, 90/120Hz on many phones — so without
+// this, physics would run 1.5–2× faster on a high-refresh phone. The
+// accumulator runs `update` exactly once per 16.67 ms regardless of refresh.
+const STEP_MS = 1000 / 60;
+const MAX_STEP_PER_FRAME = 5;   // safety cap so a tab returning from background doesn't run 60 updates
+let _lastFrame = 0, _accumulator = 0;
+
+function gameLoop(now) {
+  G.rafId = requestAnimationFrame(gameLoop);
+  if (!_lastFrame) _lastFrame = now || performance.now();
+  const t = now || performance.now();
+  const dt = Math.min(100, t - _lastFrame);
+  _lastFrame = t;
+  if (!G.paused) {
+    _accumulator += dt;
+    let steps = 0;
+    while (_accumulator >= STEP_MS && steps < MAX_STEP_PER_FRAME) {
+      G.active.update(api);
+      _accumulator -= STEP_MS;
+      steps++;
+    }
+    if (_accumulator > STEP_MS) _accumulator = 0;   // catch up if we hit cap
+  }
   const cx = $('game-canvas').getContext('2d');
   G.active.render(cx);
   $('hud-status').textContent = G.paused ? 'PAUSED' : G.active.status();
-  // Level 1 RIDE button visibility
   if (G.level === 1 && Level1.isBoardPossible && !G.paused) {
     $('ride-btn').classList.toggle('hidden', !Level1.isBoardPossible());
   } else {
     $('ride-btn').classList.add('hidden');
   }
-  G.rafId = requestAnimationFrame(gameLoop);
 }
 
 function setPaused(on) {

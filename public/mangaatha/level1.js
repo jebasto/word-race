@@ -5,18 +5,18 @@
 // Level 1 tunables — adjust these to change feel
 const L1_TUNE = {
   W: 880, H: 360,
-  GROUND: 308,             // feet position
+  GROUND: 300,             // feet position
   MURU_X: 160,
   MURU_SCALE: 0.62,
   // Jump physics
   JUMP_VY: -11.4,
-  GRAVITY_NORMAL: 0.55,
+  GRAVITY_NORMAL: 0.65,
   GRAVITY_HOLD:   0.26,
-  JUMP_HOLD_FRAMES: 18,
+  JUMP_HOLD_FRAMES: 12,
   // Speed
   SPEED_MIN: 6.5,
   SPEED_MAX: 9.5,
-  SPEED_RAMP_DIST: 3500,
+  SPEED_RAMP_DIST: 3000,
   // Spacing
   GAP_MIN: 230,            // tighter so some obstacles feel close
   GAP_MAX: 560,
@@ -24,11 +24,11 @@ const L1_TUNE = {
   // Obstacle queue
   TOTAL_OBSTACLES: 45,
   NUM_AUTOS: 2,
-  NUM_COFFEES: 3,
+  NUM_COFFEES: 2,
   NUM_PAIRS: 3,            // 2–3 spots where two small obstacles cluster (held-jump)
   // Power-up
   RIDE_FRAMES: 300,
-  RIDE_GRACE: 90,
+  RIDE_GRACE: 190,
   RIDE_BOARD_RANGE: 220,
   // Saree-miss → cry → fail
   CRY_FRAMES: 150,         // ~2.5 s of crying before triggering fail
@@ -1455,8 +1455,10 @@ function updateL1(api) {
 
   for (const o of L1.obstacles) {
     if (o.flying) continue;
+    // Coffee hit-box is generous: covers full sprite width plus the ±4px
+    // float wobble plus the steam plume above so a high jump still registers.
     const obBox = (o.kind === 'coffee')
-      ? { x: o.x + 6, y: o.floatY - 26, w: o.w - 12, h: o.h - 6 }
+      ? { x: o.x - 6, y: o.floatY - 50, w: o.w + 12, h: o.h + 26 }
       : { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
     if (!boxOverlap(muruBox, obBox)) continue;
 
