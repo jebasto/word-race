@@ -219,12 +219,19 @@ function gameLoop() {
   const cx = $('game-canvas').getContext('2d');
   G.active.render(cx);
   $('hud-status').textContent = G.paused ? 'PAUSED' : G.active.status();
+  // Level 1 RIDE button visibility
+  if (G.level === 1 && Level1.isBoardPossible && !G.paused) {
+    $('ride-btn').classList.toggle('hidden', !Level1.isBoardPossible());
+  } else {
+    $('ride-btn').classList.add('hidden');
+  }
   G.rafId = requestAnimationFrame(gameLoop);
 }
 
 function setPaused(on) {
   G.paused = on;
   $('pause-overlay').classList.toggle('hidden', !on);
+  if (on) $('ride-btn').classList.add('hidden');
   // Release keyboard inputs so movement doesn't keep building up
   if (on && G.level === 2) {
     Level2.setDir('up', false); Level2.setDir('down', false);
@@ -400,6 +407,17 @@ $('game-canvas').addEventListener('pointercancel', () => { if (G.level === 1) Le
 $('pause-btn').addEventListener('click',     () => setPaused(true));
 $('resume-btn').addEventListener('click',    () => setPaused(false));
 $('pause-overlay').addEventListener('click', e => { if (e.target === $('pause-overlay')) setPaused(false); });
+
+// RIDE button (Level 1 mobile / desktop alternative to the DOWN key)
+const rideBtn = $('ride-btn');
+function boardFromButton(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  if (G.level === 1 && !G.paused) Level1.boardPress();
+}
+rideBtn.addEventListener('pointerdown', boardFromButton);
+rideBtn.addEventListener('touchstart',  boardFromButton, { passive: false });
+rideBtn.addEventListener('click',       boardFromButton);
 
 // Touch pad (Level 2)
 document.querySelectorAll('.dpad-btn').forEach(b => {
