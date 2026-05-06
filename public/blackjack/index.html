@@ -42,9 +42,10 @@
     </div>
 
     <!-- Dealer -->
-    <div class="dealer-area">
+    <div class="dealer-area" id="dealer-area">
       <div class="dealer-name">DEALER <span id="dealer-total"></span></div>
       <div class="hand" id="dealer-hand"></div>
+      <div id="pot-anchor" style="position:absolute;left:50%;top:50%;width:1px;height:1px;"></div>
     </div>
 
     <!-- Player seats -->
@@ -67,6 +68,9 @@
           <button id="bet-place">Place Bet</button>
         </div>
         <div class="bet-summary" id="bet-summary"></div>
+        <label class="sitout-toggle">
+          <input type="checkbox" id="sitout-toggle"> Sit out next round
+        </label>
       </div>
 
       <!-- Insurance UI -->

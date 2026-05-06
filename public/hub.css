@@ -119,13 +119,16 @@ body {
 .game-card.disabled:hover { transform: none; }
 
 .game-art {
-  height: 140px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  height: 150px;
   position: relative;
+  overflow: hidden;
 }
-.game-art-letter {
+.game-art svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.game-art-letter {  /* legacy fallback */
   font-size: 4.5rem;
   font-weight: 900;
   color: rgba(255,255,255,0.95);

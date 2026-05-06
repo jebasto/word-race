@@ -65,18 +65,99 @@ $('how-close').addEventListener('click', () => $('how-modal').classList.add('hid
 $('how-modal').addEventListener('click', e => { if (e.target === $('how-modal')) $('how-modal').classList.add('hidden'); });
 
 // ── State sync ─────────────────────────────────────────────────────
+let prevPlayers = {};   // pid -> {chips, betSent, hands}
+let prevPhase   = null;
+
 function onState(msg) {
+  const oldState = state;
   state = msg;
   if (msg.yourId) myId = msg.yourId;
 
-  // If we're seated → show game; otherwise stay on sit screen
   if (seated && myId) {
     $('sit-screen').classList.add('hidden');
     $('game-screen').classList.remove('hidden');
   }
 
   render();
+  detectAnimations(oldState);
   updateChipsFromState();
+
+  prevPhase = msg.phase;
+}
+
+function detectAnimations(prev) {
+  if (!state || !state.players) return;
+  for (const p of state.players) {
+    const old = prevPlayers[p.id];
+    const oldChips = old?.chips;
+    const oldBet   = old?.firstBet ?? 0;
+    const newBet   = (p.hands?.[0]?.bet) || 0;
+
+    // 1) Bet placed: bet went 0 → X. Fly chip from seat to pot.
+    if (newBet > oldBet && (state.phase === 'lobby' || state.phase === 'dealing')) {
+      flyChip(seatEl(p.id), $('pot-anchor'), '-' + (newBet - oldBet), 'bet');
+    }
+
+    // 2) Payout: chips went up during resolution. Fly chip from pot to seat + show +X.
+    if (state.phase === 'resolution' && oldChips != null && p.chips > oldChips) {
+      const delta = p.chips - oldChips;
+      flyChip($('pot-anchor'), seatEl(p.id), '+' + delta, 'win');
+      popPayout(p.id, '+' + delta, 'gain');
+    }
+    // 3) Loss flash: bet > 0 last hand and result = lose/bust → -bet floater
+    if (state.phase === 'resolution' && p.hands?.length) {
+      for (const h of p.hands) {
+        if (h.result === 'lose' || h.result === 'bust') {
+          if (!old?.lossShown?.[h.bet]) {
+            popPayout(p.id, '-' + h.bet, 'loss');
+            old && (old.lossShown = { ...(old.lossShown||{}), [h.bet]: true });
+          }
+        }
+      }
+    }
+
+    prevPlayers[p.id] = {
+      chips: p.chips,
+      firstBet: newBet,
+      lossShown: prevPlayers[p.id]?.lossShown || {},
+    };
+  }
+}
+
+function seatEl(pid) {
+  return document.querySelector(`.seat[data-pid="${pid}"]`) || $('pot-anchor');
+}
+
+function flyChip(fromEl, toEl, label, kind) {
+  if (!fromEl || !toEl) return;
+  const r1 = fromEl.getBoundingClientRect();
+  const r2 = toEl.getBoundingClientRect();
+  const cx1 = r1.left + r1.width / 2;
+  const cy1 = r1.top  + r1.height / 2;
+  const cx2 = r2.left + r2.width / 2;
+  const cy2 = r2.top  + r2.height / 2;
+  const chip = document.createElement('div');
+  chip.className = 'flying-chip';
+  chip.textContent = label;
+  chip.style.left = cx1 + 'px';
+  chip.style.top  = cy1 + 'px';
+  document.body.appendChild(chip);
+  // next frame → animate
+  requestAnimationFrame(() => {
+    chip.style.transform = `translate(${cx2 - cx1 - r1.width/2 + r1.width/2}px, ${cy2 - cy1}px) scale(0.85)`;
+    chip.style.opacity   = '0.4';
+  });
+  setTimeout(() => chip.remove(), 750);
+}
+
+function popPayout(pid, text, cls) {
+  const seat = seatEl(pid);
+  if (!seat || seat.id === 'pot-anchor') return;
+  const pop = document.createElement('div');
+  pop.className = 'payout-pop ' + cls;
+  pop.textContent = text;
+  seat.appendChild(pop);
+  setTimeout(() => pop.remove(), 1700);
 }
 
 function updateChipsFromState() {
@@ -101,12 +182,12 @@ function render() {
 function renderPhaseBar() {
   const labels = {
     idle:        'Waiting for players',
-    lobby:       'Place your bets',
+    lobby:       state.phaseDeadline > 0 ? 'Place your bets' : 'Waiting for first bet…',
     dealing:     'Dealing…',
     insurance:   'Insurance offered',
     playing:     'Players playing',
     dealer:      'Dealer drawing',
-    resolution:  'Round complete',
+    resolution:  'Round complete — next in',
   };
   $('phase-label').textContent = labels[state.phase] || state.phase;
 
@@ -114,7 +195,7 @@ function renderPhaseBar() {
   if (state.phaseDeadline > 0) {
     const left = Math.max(0, Math.ceil(state.phaseDeadline - state.now));
     t.textContent = left + 's';
-    t.classList.toggle('urgent', left <= 5);
+    t.classList.toggle('urgent', left <= 5 && state.phase !== 'resolution');
   } else {
     t.textContent = '';
     t.classList.remove('urgent');
@@ -152,6 +233,7 @@ function renderSeats() {
     const p   = playersById[pid];
     const div = document.createElement('div');
     div.className = 'seat';
+    div.dataset.pid = pid;
 
     if (!p) {
       div.classList.add('empty');
@@ -163,11 +245,13 @@ function renderSeats() {
     if (p.id === myId)              div.classList.add('you');
     if (state.currentPid === p.id)  div.classList.add('active');
     if (p.sitOut)                   div.classList.add('sitout');
+    if (p.skipRound)                div.classList.add('sitout');
     if (!p.connected)               div.classList.add('disconnected');
 
     let html = '';
     if (p.id === myId) html += `<span class="you-tag">YOU</span>`;
-    if (p.insurance > 0) html += `<span class="insurance-tag">INS ${p.insurance}</span>`;
+    if (p.skipRound)   html += `<span class="insurance-tag">SITTING OUT</span>`;
+    else if (p.insurance > 0) html += `<span class="insurance-tag">INS ${p.insurance}</span>`;
 
     html += `
       <div class="seat-head">
@@ -193,15 +277,23 @@ function renderPlayerHands(p) {
     h.cards.forEach(c => { cards += makeCard(c).outerHTML; });
     let result = '';
     if (h.result) {
-      const text = { win: 'WIN', bj: 'BJ +50%', push: 'PUSH', lose: 'LOSE', bust: 'BUST', surrender: 'SURR' }[h.result];
-      result = `<span class="hand-result ${h.result}">${text}${h.payout ? ' +' + h.payout : ''}</span>`;
+      const text = { win: 'WIN', bj: 'BLACKJACK', push: 'PUSH', lose: 'LOSE', bust: 'BUST', surrender: 'SURRENDER' }[h.result];
+      result = `<span class="hand-result ${h.result}">${text}</span>`;
     }
-    const total = h.cards.length ? `<span class="hand-total">${h.total}${h.soft ? '↑' : ''}${h.isBlackjack ? '★' : ''}</span>` : '';
-    const bet   = h.bet > 0 ? `<span class="hand-bet">${h.bet}</span>` : '';
+    const totalBlock = h.cards.length ? `
+      <div class="meta-block total">
+        <div class="meta-label">TOTAL</div>
+        <div class="meta-value ${h.isBlackjack ? 'total-bj' : ''}">${h.total}${h.soft ? '<span class="total-soft">soft</span>' : ''}</div>
+      </div>` : '';
+    const betBlock = h.bet > 0 ? `
+      <div class="meta-block bet">
+        <div class="meta-label">BET</div>
+        <div class="meta-value">${h.bet}</div>
+      </div>` : '';
     return `
-      <div class="seat-hand ${isCurrent ? 'current' : ''}">
+      <div class="seat-hand ${isCurrent ? 'current' : ''}" data-pid="${p.id}" data-handidx="${idx}">
         <div class="seat-hand-cards">${cards}</div>
-        <div class="hand-meta">${bet}${total}</div>
+        <div class="hand-meta">${betBlock}${totalBlock}</div>
         ${result}
       </div>
     `;
@@ -219,9 +311,9 @@ function makeCard(c) {
   div.classList.add(isRed ? 'red' : 'black');
   const sym = { S: '♠', H: '♥', D: '♦', C: '♣' }[c.s] || c.s;
   div.innerHTML = `
-    <div class="card-rank-tl">${c.r}<br>${sym}</div>
+    <div class="card-corner tl"><span class="card-corner-rank">${c.r}</span><span class="card-corner-suit">${sym}</span></div>
     <div class="card-mid">${sym}</div>
-    <div class="card-rank-br">${c.r}<br>${sym}</div>
+    <div class="card-corner br"><span class="card-corner-rank">${c.r}</span><span class="card-corner-suit">${sym}</span></div>
   `;
   return div;
 }
@@ -286,15 +378,21 @@ function renderActionPanel() {
 
 function renderBetUI(me) {
   $('bet-ui').classList.remove('hidden');
+  const sittingOut = !!me.sitOutToggle;
   const presets = document.querySelectorAll('.bet-presets button');
   presets.forEach(b => {
     const amt = b.dataset.amt;
     const v = amt === 'all' ? me.chips : parseInt(amt, 10);
-    b.disabled = me.chips < (amt === 'all' ? state.minBet : v) || v < state.minBet;
+    b.disabled = sittingOut || me.chips < (amt === 'all' ? state.minBet : v) || v < state.minBet;
   });
-  $('bet-summary').textContent = `Min bet ${state.minBet}. You have ${me.chips} chips.`;
+  $('bet-place').disabled = sittingOut;
+  $('bet-custom-input').disabled = sittingOut;
+  $('bet-summary').textContent = sittingOut
+    ? 'Sit-out is on. Toggle off to bet.'
+    : `Min bet ${state.minBet}. You have ${me.chips} chips.`;
   const inp = $('bet-custom-input');
   inp.min = state.minBet; inp.max = me.chips;
+  $('sitout-toggle').checked = sittingOut;
 }
 
 function configureActionButtons(me) {
@@ -351,6 +449,11 @@ document.querySelectorAll('.act-btn').forEach(b => {
 // Insurance
 $('ins-yes').addEventListener('click', () => send('insurance', { take: true }));
 $('ins-no').addEventListener('click',  () => send('insurance', { take: false }));
+
+// Sit-out toggle
+$('sitout-toggle').addEventListener('change', e => {
+  send('sitout', { on: e.target.checked });
+});
 
 // ── Event log ──────────────────────────────────────────────────────
 let lastLogged = '';

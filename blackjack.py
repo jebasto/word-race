@@ -144,6 +144,8 @@ class BlackjackTable:
                 'sitOut': p['sitOut'], 'connected': p['connected'],
                 'pendingAction': p['pendingAction'],
                 'turnDeadline': p['turnDeadline'],
+                'sitOutToggle': bool(p.get('sitOutToggle')),
+                'skipRound':    bool(p.get('skipRound')),
             })
 
         return {
@@ -290,35 +292,57 @@ def seat_remove(table: BlackjackTable, pid):
 
 
 async def play_round(table: BlackjackTable):
-    # ── PHASE: lobby (join + bet, 20s window) ──────────────────────
+    # ── PHASE: lobby (open until first bet, then 20s for others) ──
     table.reset_hands()
-    # If sit() already kicked us into lobby, use that deadline; otherwise start a new one.
-    if table.phase != 'lobby' or table.phase_deadline <= time.time():
-        table.phase           = 'lobby'
-        table.phase_deadline  = time.time() + LOBBY_WINDOW
+    table.phase          = 'lobby'
+    table.phase_deadline = 0          # no timer until someone bets
     table.lobby_event.clear()
     for p in table.players.values():
         p['hands'] = [{
             'cards': [], 'bet': 0, 'doubled': False, 'surrendered': False,
             'finished': False, 'result': None, 'payout': 0, 'isSplit': False,
         }]
-        p['sitOut'] = False
+        # Carry over sticky sit-out from previous round
+        p['skipRound'] = bool(p.get('sitOutToggle'))
+        p['sitOut']    = False
         p.pop('insuranceDecided', None)
     await broadcast_state(table)
 
-    deadline = table.phase_deadline
-    while time.time() < deadline:
-        if everyone_bet(table):
+    # 1) Wait for the FIRST bet (no deadline). Bail if everyone sits out.
+    while True:
+        if not table.players:
+            return
+        any_bet = any(p['hands'][0]['bet'] >= MIN_BET
+                      for p in table.players.values() if not p['skipRound'])
+        any_eligible = any(not p['skipRound'] for p in table.players.values())
+        if not any_eligible:
+            await asyncio.sleep(2)
+            return
+        if any_bet:
             break
         try:
-            await asyncio.wait_for(table.lobby_event.wait(), timeout=max(0.3, deadline - time.time()))
+            await asyncio.wait_for(table.lobby_event.wait(), timeout=2.0)
         except asyncio.TimeoutError:
             pass
         table.lobby_event.clear()
 
-    # Anyone with no bet sits out this round
+    # 2) First bet placed — start the 20s window for everyone else.
+    table.phase_deadline = time.time() + LOBBY_WINDOW
+    await broadcast_state(table)
+
+    while time.time() < table.phase_deadline:
+        if everyone_decided(table):
+            break
+        try:
+            await asyncio.wait_for(table.lobby_event.wait(),
+                                   timeout=max(0.3, table.phase_deadline - time.time()))
+        except asyncio.TimeoutError:
+            pass
+        table.lobby_event.clear()
+
+    # 3) Anyone without a bet sits out this round (and is locked out)
     for p in table.players.values():
-        if p['hands'][0]['bet'] < MIN_BET:
+        if p['skipRound'] or p['hands'][0]['bet'] < MIN_BET:
             p['sitOut'] = True
 
     active = [p['id'] for p in table.players.values() if not p['sitOut'] and p['chips'] >= 0]
@@ -451,8 +475,8 @@ async def play_round(table: BlackjackTable):
                 h['payout'] = 0
 
     # Push chips updates to clients (and persist)
+    table.phase_deadline = time.time() + RESULT_LINGER
     await broadcast_state(table)
-    # Build summary text
     table.last_action_text = ""
     await broadcast(table, type='roundend')
     await asyncio.sleep(RESULT_LINGER)
@@ -473,6 +497,14 @@ async def wait_for_insurance(table, active_pids):
 def everyone_bet(table):
     if not table.players: return False
     return all(p['hands'] and p['hands'][0]['bet'] >= MIN_BET for p in table.players.values())
+
+def everyone_decided(table):
+    """All seated players have either placed a bet or toggled sit-out."""
+    if not table.players: return False
+    return all(
+        p.get('skipRound') or (p['hands'] and p['hands'][0]['bet'] >= MIN_BET)
+        for p in table.players.values()
+    )
 
 
 async def play_player_turn(table: BlackjackTable, p):
@@ -690,6 +722,15 @@ async def handle_blackjack(ws):
                 pid = table.sockets.get(ws)
                 if pid:
                     await handle_insurance(table, pid, bool(msg.get('take')))
+
+            elif t == 'sitout':
+                pid = table.sockets.get(ws)
+                p = table.players.get(pid) if pid else None
+                if p and table.phase == 'lobby':
+                    p['sitOutToggle'] = bool(msg.get('on'))
+                    p['skipRound']    = p['sitOutToggle']
+                    table.lobby_event.set()
+                    await broadcast_state(table)
 
             elif t == 'chat':
                 # Simple chat passthrough
