@@ -14,8 +14,8 @@ const L1_TUNE = {
   GRAVITY_HOLD:   0.26,
   JUMP_HOLD_FRAMES: 12,
   // Speed
-  SPEED_MIN: 6.5,
-  SPEED_MAX: 9.5,
+  SPEED_MIN: 4.5,
+  SPEED_MAX: 7.5,
   SPEED_RAMP_DIST: 3000,
   // Spacing
   GAP_MIN: 230,            // tighter so some obstacles feel close
@@ -1455,10 +1455,8 @@ function updateL1(api) {
 
   for (const o of L1.obstacles) {
     if (o.flying) continue;
-    // Coffee hit-box is generous: covers full sprite width plus the ±4px
-    // float wobble plus the steam plume above so a high jump still registers.
     const obBox = (o.kind === 'coffee')
-      ? { x: o.x - 6, y: o.floatY - 50, w: o.w + 12, h: o.h + 26 }
+      ? { x: o.x + 6, y: o.floatY - 26, w: o.w - 12, h: o.h - 6 }
       : { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
     if (!boxOverlap(muruBox, obBox)) continue;
 

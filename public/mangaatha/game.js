@@ -348,12 +348,23 @@ document.addEventListener('click', e => {
   const a = e.target.closest('[data-action]');
   if (!a) return;
   const act = a.dataset.action;
-  if (act === 'start')  startAdventure();
-  if (act === 'family') show('family');
-  if (act === 'menu')   show('menu');
-  if (act === 'reset')  { G.done = []; G.lives = STARTING_LIVES; G.level = 0; clearSave(); show('menu'); }
-  if (act === 'retry')  retryLevel();
+  if (act === 'start')      startAdventure();
+  if (act === 'family')     show('family');
+  if (act === 'menu')       show('menu');
+  if (act === 'reset')      { G.done = []; G.lives = STARTING_LIVES; G.level = 0; clearSave(); show('menu'); }
+  if (act === 'retry')      retryLevel();
+  if (act === 'jumplevel')  jumpToLevel(parseInt(a.dataset.level, 10));
 });
+
+// Skip the story and drop straight into a level — top up lives so the player
+// can actually try it. Levels 3+ aren't built yet so we no-op those.
+function jumpToLevel(n) {
+  if (!Number.isFinite(n) || n < 1 || n > 8) return;
+  if (n > 2) { alert('Level ' + n + ' isn\'t built yet — only L1 and L2 are playable.'); return; }
+  if (G.lives < 3) { G.lives = STARTING_LIVES; saveSave(); }
+  G.level = n;
+  show('game');
+}
 
 function startAdventure() {
   if (!Number.isFinite(G.lives) || G.lives <= 0) G.lives = STARTING_LIVES;

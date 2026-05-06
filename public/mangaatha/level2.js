@@ -542,7 +542,6 @@ function drawGuardTopDown(cx, g, t) {
 // Direction-aware via cx.rotate(dir).
 function drawMuruTopDown(cx, x, y, dir, t, hasPainting) {
   // Stepping animation — pulsing scale for a sense of running
-  const speedy = (Math.abs(L2.player?.x ? 1 : 1));
   const step = Math.sin(t * 0.4) * 0.04;
   cx.save();
   cx.translate(x, y);
