@@ -4,30 +4,34 @@
 
 // Level 1 tunables — adjust these to change feel
 const L1_TUNE = {
-  W: 880, H: 340,
-  GROUND: 290,             // feet position; road extends below this
+  W: 880, H: 360,
+  GROUND: 308,             // feet position
   MURU_X: 160,
   MURU_SCALE: 0.62,
   // Jump physics
-  JUMP_VY: -10.8,
+  JUMP_VY: -11.4,
   GRAVITY_NORMAL: 0.55,
-  GRAVITY_HOLD:   0.27,
-  JUMP_HOLD_FRAMES: 17,
+  GRAVITY_HOLD:   0.26,
+  JUMP_HOLD_FRAMES: 18,
   // Speed
-  SPEED_MIN: 4.6,
-  SPEED_MAX: 8.4,
-  SPEED_RAMP_DIST: 4000,
+  SPEED_MIN: 6.5,
+  SPEED_MAX: 9.5,
+  SPEED_RAMP_DIST: 3500,
   // Spacing
-  GAP_MIN: 290,
+  GAP_MIN: 230,            // tighter so some obstacles feel close
   GAP_MAX: 560,
+  GAP_PAIR: 110,           // tight gap used for the "pair" obstacles
   // Obstacle queue
   TOTAL_OBSTACLES: 45,
   NUM_AUTOS: 2,
-  NUM_COFFEES: 3,            // filter coffee pickups (each gives +1 life)
+  NUM_COFFEES: 3,
+  NUM_PAIRS: 3,            // 2–3 spots where two small obstacles cluster (held-jump)
   // Power-up
   RIDE_FRAMES: 300,
   RIDE_GRACE: 90,
-  RIDE_BOARD_RANGE: 220,   // px window where boarding is allowed (rightward)
+  RIDE_BOARD_RANGE: 220,
+  // Saree-miss → cry → fail
+  CRY_FRAMES: 150,         // ~2.5 s of crying before triggering fail
 };
 
 const L1 = {
@@ -55,10 +59,13 @@ const L1 = {
   particles: [],
   jumpPress: false,
   jumpHeld:  false,
-  downPress: false,    // edge-triggered "board the auto" key
+  downPress: false,
   totalObstacles: 0,
   lastEndline: 0,
-  boardPossible: false,   // is there a nearby auto to board right now?
+  boardPossible: false,
+  // Crying sequence after a missed saree
+  cryingT: 0,
+  tightFollow: false,    // next-spawn flag carried from the previous obstacle
 };
 
 // Obstacle definitions — each draw fn takes (cx, x, baseY, frame)
@@ -123,7 +130,7 @@ const OB_TYPES = {
     }
   },
   dog: {
-    w: 44, h: 30,
+    w: 44, h: 30, yOff: 6,
     draw(cx, x, by, t) {
       cx.save(); cx.translate(x, by);
       const wob = Math.sin(t * 0.1) * 1;
@@ -176,7 +183,7 @@ const OB_TYPES = {
     }
   },
   peel: {
-    w: 60, h: 18,
+    w: 60, h: 18, yOff: 8,
     draw(cx, x, by, t) {
       // Two banana peels lying on the road — clear cartoon C-shapes with
       // brown stems on the inner edge and pale cream interiors.
@@ -245,7 +252,7 @@ const OB_TYPES = {
     }
   },
   puddle: {
-    w: 80, h: 10,
+    w: 80, h: 10, yOff: 12,
     draw(cx, x, by, t) {
       // Irregular blob of water sitting flat on the road.
       cx.save();
@@ -284,7 +291,7 @@ const OB_TYPES = {
     }
   },
   pothole: {
-    w: 56, h: 16,
+    w: 56, h: 16, yOff: 12,
     draw(cx, x, by, t) {
       cx.save();
       cx.translate(x, by);
@@ -635,9 +642,9 @@ function drawCoffee(cx, x, y, t) {
 
   cx.scale(1 / pulse, 1 / pulse);
 
-  // "+1" pill below
-  ol(cx, () => { cx.beginPath(); rR(cx, -16, 22, 32, 14, 7); }, '#E91E63', 1.5);
-  cx.fillStyle = '#fff';
+  // "+1 LIFE" gold pill (no heart imagery; pure Filter Kaapi life-up)
+  ol(cx, () => { cx.beginPath(); rR(cx, -22, 22, 44, 14, 7); }, '#F4C430', 1.5);
+  cx.fillStyle = BL;
   cx.font = 'bold 10px sans-serif'; cx.textAlign = 'center';
   cx.fillText('+1 LIFE', 0, 32);
   cx.textAlign = 'left';
@@ -679,6 +686,93 @@ function drawBoardPrompt(cx, x, y, t) {
   cx.font = 'bold 13px sans-serif';
   cx.textAlign = 'left';
   cx.fillText('PRESS  ⬇', -14, 4);
+  cx.restore();
+}
+
+// Crying / defeated Muru — squatted, hands on face, sad eyes, mustache drooping
+function drawMuruCrying(cx, x, y, t) {
+  cx.save();
+  cx.translate(x, y);
+  cx.scale(L1_TUNE.MURU_SCALE, L1_TUNE.MURU_SCALE);
+  // Soft floor shadow
+  cx.fillStyle = 'rgba(0,0,0,0.18)';
+  cx.beginPath(); cx.ellipse(0, 5, 26, 5, 0, 0, Math.PI * 2); cx.fill();
+  // Crouched legs (folded under)
+  ol(cx, () => { cx.beginPath(); rR(cx, -22, -8, 44, 14, 6); }, '#D4A017');
+  cx.fillStyle = '#7A3B10';
+  cx.beginPath(); cx.ellipse(-16, 6, 9, 3, 0, 0, Math.PI * 2); cx.fill();
+  cx.beginPath(); cx.ellipse(16, 6, 9, 3, 0, 0, Math.PI * 2); cx.fill();
+  // Dhoti folds
+  ol(cx, () => {
+    cx.beginPath();
+    cx.moveTo(-22, -22); cx.lineTo(22, -22);
+    cx.lineTo(20, -8); cx.lineTo(-20, -8); cx.closePath();
+  }, '#FFFFF0');
+  // Shirt — slumped
+  ol(cx, () => { cx.beginPath(); rR(cx, -22, -56, 44, 36, 6); }, '#C0392B');
+  // Gold chain
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 2.5;
+  cx.beginPath(); cx.arc(0, -42, 12, 0.18 * Math.PI, 0.82 * Math.PI); cx.stroke();
+  cx.fillStyle = '#F4C430';
+  cx.beginPath(); cx.arc(0, -32, 3, 0, Math.PI * 2); cx.fill();
+  // Head, slightly tilted forward
+  ol(cx, () => { cx.beginPath(); cx.arc(0, -86, 28, 0, Math.PI * 2); }, SK);
+  // Hair
+  ol(cx, () => { cx.beginPath(); cx.arc(0, -92, 26, Math.PI + 0.15, -0.15); }, BL);
+  // Sad slanted eyebrows (inverted V)
+  cx.strokeStyle = BL; cx.lineWidth = 3; cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(-18, -94); cx.quadraticCurveTo(-12, -98, -6, -92);
+  cx.moveTo(6, -92);   cx.quadraticCurveTo(12, -98, 18, -94);
+  cx.stroke();
+  // Closed/squinting eyes (>< shapes)
+  cx.strokeStyle = BL; cx.lineWidth = 2.5; cx.lineCap = 'round';
+  cx.beginPath();
+  cx.moveTo(-16, -82); cx.lineTo(-9, -86);
+  cx.moveTo(-9, -86);  cx.lineTo(-16, -90);
+  cx.moveTo(16, -82);  cx.lineTo(9, -86);
+  cx.moveTo(9, -86);   cx.lineTo(16, -90);
+  cx.stroke();
+  // Drooping mustache
+  cx.fillStyle = BL;
+  cx.beginPath();
+  cx.moveTo(-2, -68);
+  cx.bezierCurveTo(-10, -64, -14, -56, -10, -52);
+  cx.bezierCurveTo(-6, -54, -4, -60, -2, -68);
+  cx.closePath(); cx.fill();
+  cx.beginPath();
+  cx.moveTo(2, -68);
+  cx.bezierCurveTo(10, -64, 14, -56, 10, -52);
+  cx.bezierCurveTo(6, -54, 4, -60, 2, -68);
+  cx.closePath(); cx.fill();
+  // Frown
+  cx.strokeStyle = '#7A3A20'; cx.lineWidth = 2;
+  cx.beginPath();
+  cx.arc(0, -54, 8, 1.15 * Math.PI, 1.85 * Math.PI);
+  cx.stroke();
+  // Hands raised to face (clenched)
+  cx.fillStyle = SK; cx.strokeStyle = BL; cx.lineWidth = 1.6;
+  cx.beginPath(); cx.arc(-22, -78, 6, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.beginPath(); cx.arc( 22, -78, 6, 0, Math.PI * 2); cx.fill(); cx.stroke();
+  cx.restore();
+}
+
+// "I missed it!" speech bubble
+function drawCryBubble(cx, x, y, text, t) {
+  const wob = Math.sin(t * 0.06) * 1.5;
+  cx.save();
+  cx.translate(x, y + wob);
+  ol(cx, () => { cx.beginPath(); rR(cx, -100, -22, 200, 36, 14); }, '#fff', 2.5);
+  cx.fillStyle = BL;
+  cx.font = 'bold 13px sans-serif';
+  cx.textAlign = 'center';
+  cx.fillText(text, 0, 0);
+  cx.textAlign = 'left';
+  // Tail
+  cx.fillStyle = '#fff';
+  cx.beginPath(); cx.moveTo(-8, 14); cx.lineTo(0, 26); cx.lineTo(8, 14); cx.closePath();
+  cx.fill();
+  cx.strokeStyle = BL; cx.lineWidth = 2.5; cx.stroke();
   cx.restore();
 }
 
@@ -1076,7 +1170,19 @@ function generateL1Queue() {
   for (let i = 0; i < 8; i++) {
     if (big.has(q[i])) q[i] = ['peel','dog','puddle','pothole'][Math.floor(Math.random()*4)];
   }
-  // Insert auto power-ups (NUM_AUTOS) roughly evenly distributed
+  // Mark some small obstacles as "tight follow" — the NEXT obstacle after them
+  // spawns at GAP_PAIR distance, forcing a held-jump over both.
+  const small = new Set(['peel', 'dog', 'puddle', 'pothole']);
+  let pairsPlaced = 0, tries = 0;
+  while (pairsPlaced < L1_TUNE.NUM_PAIRS && tries < 50) {
+    const idx = 10 + Math.floor(Math.random() * (q.length - 14));
+    if (typeof q[idx] === 'string' && small.has(q[idx]) && typeof q[idx+1] === 'string' && small.has(q[idx+1])) {
+      q[idx] = { type: q[idx], tightFollow: true };
+      pairsPlaced++;
+    }
+    tries++;
+  }
+  // Insert auto power-ups
   const autoSpots = [];
   for (let i = 0; i < L1_TUNE.NUM_AUTOS; i++) {
     autoSpots.push(8 + Math.floor((q.length / L1_TUNE.NUM_AUTOS) * (i + 0.5)) + Math.floor(Math.random()*4-2));
@@ -1118,13 +1224,47 @@ function resetL1() {
   L1.particles = [];
   L1.jumpPress = false;
   L1.jumpHeld  = false;
+  L1.downPress = false;
   L1.lastEndline = 0;
+  L1.cryingT = 0;
+  L1.tightFollow = false;
+  L1.boardPossible = false;
 }
 
 // ── Update ────────────────────────────────────────────────────────
 function updateL1(api) {
-  if (L1.state !== 'running') return;
   L1.frame++;
+
+  // Crying state: world freezes, tears fall, then fail screen.
+  if (L1.state === 'crying') {
+    L1.cryingT--;
+    L1.speed *= 0.86;
+    if (L1.speed < 0.2) L1.speed = 0;
+    L1.bg.far    += L1.speed * 0.18;
+    L1.bg.mid    += L1.speed * 0.45;
+    L1.bg.near   += L1.speed * 0.85;
+    L1.bg.ground += L1.speed;
+    L1.obstacles.forEach(o => { if (!o.flying) o.x -= L1.speed; });
+    if (L1.frame % 7 === 0) {
+      for (let i = 0; i < 2; i++) {
+        L1.particles.push({
+          x: L1.MURU_X + (Math.random() - 0.5) * 12,
+          y: L1.GROUND - 50,
+          vx: (Math.random() - 0.5) * 0.6, vy: 1.6,
+          life: 60, color: '#5DADE2'
+        });
+      }
+    }
+    L1.particles.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += 0.2; p.life--; });
+    L1.particles = L1.particles.filter(p => p.life > 0);
+    if (L1.cryingT <= 0) {
+      L1.state = 'failed';
+      api.lose();
+    }
+    return;
+  }
+
+  if (L1.state !== 'running') return;
 
   // Speed ramp from MIN → MAX
   const ramp = Math.min(1, L1.distance / L1_TUNE.SPEED_RAMP_DIST);
@@ -1199,34 +1339,46 @@ function updateL1(api) {
 
   // Spawn obstacles / pickups
   if (L1.queue.length > 0 && L1.nextSpawnX <= L1.W + 60) {
-    const type = L1.queue.shift();
-    if (type === '__auto__') {
+    const item = L1.queue.shift();
+    const tag       = (typeof item === 'object') ? item.type : item;
+    const setTight  = (typeof item === 'object') && !!item.tightFollow;
+    const wasTight  = L1.tightFollow;
+    L1.tightFollow  = setTight;
+
+    if (tag === '__auto__') {
       L1.obstacles.push({
         kind: 'auto', x: L1.W + 50,
         w: POWERUP_AUTO.w, h: POWERUP_AUTO.h,
         baseY: L1.GROUND,
         flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
-    } else if (type === '__coffee__') {
+    } else if (tag === '__coffee__') {
       L1.obstacles.push({
         kind: 'coffee', x: L1.W + 50,
         w: 50, h: 56,
         baseY: L1.GROUND,
-        // Floating mid-air, varying height. Reachable with a held jump.
         floatY: L1.GROUND - 95 - Math.random() * 30,
         flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
     } else {
-      const def = OB_TYPES[type];
+      const def = OB_TYPES[tag];
+      const yOff = def.yOff || 0;
       L1.spawnedCount++;
       L1.obstacles.push({
-        kind: type, x: L1.W + 50,
+        kind: tag, x: L1.W + 50,
         w: def.w, h: def.h,
-        baseY: L1.GROUND,
+        baseY: L1.GROUND + yOff,   // flat obstacles sit deeper into the road
         flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
     }
-    L1.nextSpawnX = L1.W + 50 + L1_TUNE.GAP_MIN + Math.random() * (L1_TUNE.GAP_MAX - L1_TUNE.GAP_MIN);
+    // If the *previous* spawn was marked tightFollow, this spawn used a tight gap.
+    // Now choose the next-spawn gap.
+    if (setTight) {
+      // The CURRENT spawn says "spawn the NEXT one tight"
+      L1.nextSpawnX = L1.W + 50 + L1_TUNE.GAP_PAIR;
+    } else {
+      L1.nextSpawnX = L1.W + 50 + L1_TUNE.GAP_MIN + Math.random() * (L1_TUNE.GAP_MAX - L1_TUNE.GAP_MIN);
+    }
   } else {
     L1.nextSpawnX -= L1.speed;
   }
@@ -1348,9 +1500,16 @@ function updateL1(api) {
     }
   }
 
+  // Saree miss → start crying
+  if (L1.saree && !L1.saree.taken && L1.saree.x < -150 && L1.state === 'running') {
+    L1.state = 'crying';
+    L1.cryingT = L1_TUNE.CRY_FRAMES;
+    api.toast('😭 The saree got away! Mami will skin me!');
+  }
+
   // Saree pickup
   if (L1.saree && !L1.saree.taken) {
-    const sBox = { x: L1.saree.x - 30, y: L1.saree.y - 30, w: 60, h: 60 };
+    const sBox = { x: L1.saree.x - 60, y: L1.saree.y - 40, w: 120, h: 80 };
     if (boxOverlap(muruBox, sBox)) {
       L1.saree.taken = true;
       L1.state = 'won';
@@ -1424,12 +1583,14 @@ function renderL1(cx) {
   // Saree
   if (L1.saree && !L1.saree.taken) drawSaree(cx, L1.saree.x, L1.saree.y, L1.frame);
 
-  // Muru — riding or running
-  if (L1.muru.riding) {
+  // Muru — crying / riding / running
+  if (L1.state === 'crying') {
+    drawMuruCrying(cx, L1.MURU_X, L1.GROUND, L1.frame);
+    drawCryBubble(cx, L1.MURU_X, L1.GROUND - 130, 'Aiyyo… saree poiduchu! 😭', L1.frame);
+  } else if (L1.muru.riding) {
     const ax = L1.MURU_X - 36;
     const ay = L1.GROUND + Math.sin(L1.frame * 0.3) * 2;
     POWERUP_AUTO.draw(cx, ax, ay, L1.frame, true);
-    // Rider, side profile, facing the road (right)
     drawMuruRider(cx, L1.MURU_X + 14, ay - 20, L1.frame);
   } else {
     const flicker = L1.hitCooldown > 0 && Math.floor(L1.frame / 6) % 2 === 0;
