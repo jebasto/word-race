@@ -355,10 +355,8 @@ async def play_round(table: BlackjackTable):
             pass
         table.lobby_event.clear()
 
-    # 2) First bet placed — start the 20s window for everyone else.
-    table.phase_deadline = time.time() + LOBBY_WINDOW
-    await broadcast_state(table)
-
+    # 2) First bet was placed inside handle_bet (which already set phase_deadline
+    #    AND broadcast it). Just wait for the rest to decide.
     while time.time() < table.phase_deadline:
         if everyone_decided(table):
             break
@@ -599,6 +597,9 @@ async def handle_bet(table, pid, amount):
     if amount < MIN_BET or amount > p['chips']: return
     p['chips'] -= amount
     h['bet']    = amount
+    # First bet of the round? Start the 20s window now so the broadcast already carries the deadline.
+    if table.phase_deadline == 0:
+        table.phase_deadline = time.time() + LOBBY_WINDOW
     table.last_action_text = f"{p['name']} bet {amount}."
     table.lobby_event.set()
     await broadcast_state(table)

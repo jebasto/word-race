@@ -126,16 +126,42 @@ function detectAnimations(prev) {
       popPayout(p.id, '+' + delta, 'gain');
     }
 
-    // 4) Loss floater
+    // 4) Loss / surrender at resolution: chips fly to dealer pile + floater
     if (state.phase === 'resolution' && p.hands?.length) {
-      for (const h of p.hands) {
-        if ((h.result === 'lose' || h.result === 'bust') && h.bet > 0) {
-          const lossKey = `loss-${h.bet}-${h.cards.length}`;
-          if (!old?.lossShown?.[lossKey]) {
-            popPayout(p.id, '-' + h.bet, 'loss');
-            if (old) old.lossShown = { ...(old.lossShown||{}), [lossKey]: true };
-          }
+      for (let i = 0; i < p.hands.length; i++) {
+        const h = p.hands[i];
+        const isLoss = (h.result === 'lose' || h.result === 'bust');
+        const isSurr = (h.result === 'surrender');
+        if (!isLoss && !isSurr) continue;
+        const lossKey = `loss-${i}-${h.bet}`;
+        if (old?.lossShown?.[lossKey]) continue;
+        if (old) old.lossShown = { ...(old.lossShown||{}), [lossKey]: true };
+
+        if (h.result === 'bust') continue;   // bust already animated mid-play
+        const slot = potSlotEl(p.id);
+        const target = $('dealer-pile');
+        const amt = isSurr ? Math.floor(h.bet / 2) : h.bet;   // surrender = lose half
+        if (slot && target) {
+          const labels = chipBreakdown(amt);
+          labels.forEach((a, idx) => setTimeout(() => flyChip(slot, target, '−' + a, 'loss'), idx * 100));
         }
+        popPayout(p.id, '-' + amt, 'loss');
+      }
+    }
+
+    // 5) Surrender during play: also fly chip immediately (half of bet)
+    if (state.phase === 'playing' && p.hands?.length) {
+      for (let i = 0; i < p.hands.length; i++) {
+        const h = p.hands[i];
+        if (!h.surrendered) continue;
+        const surrKey = `surr-${i}`;
+        if (old?.lossShown?.[surrKey]) continue;
+        if (old) old.lossShown = { ...(old.lossShown||{}), [surrKey]: true };
+        const slot = potSlotEl(p.id);
+        const target = $('dealer-pile');
+        const amt = Math.floor(h.bet / 2);
+        if (slot && target) flyChip(slot, target, '−' + amt, 'loss');
+        popPayout(p.id, '-' + amt, 'loss');
       }
     }
 

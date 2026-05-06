@@ -1,0 +1,133 @@
+/* Shared platformer chrome — HUD, touch controls, overlays */
+body {
+  background: #000;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.back-to-hub {
+  position: fixed; top: 0.7rem; left: 0.7rem; z-index: 200;
+  padding: 0.4rem 0.85rem;
+  background: rgba(0,0,0,0.6);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 100px;
+  color: rgba(255,255,255,0.85);
+  font-size: 0.78rem; font-weight: 700;
+  text-decoration: none; letter-spacing: 0.5px;
+  font-family: 'Segoe UI', sans-serif;
+}
+.back-to-hub:hover { color: #fff; }
+
+.game-shell {
+  width: 100%; max-width: 920px;
+  display: flex; flex-direction: column;
+  align-items: center;
+  padding: 3rem 0.5rem 1rem;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+.hud {
+  width: 100%;
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 0.6rem 1rem;
+  background: rgba(0,0,0,0.55);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 12px;
+  margin-bottom: 0.5rem;
+}
+.hud-block { display: flex; align-items: center; gap: 0.5rem; }
+.hud-label {
+  font-size: 0.6rem; letter-spacing: 2px;
+  color: rgba(255,255,255,0.55); font-weight: 700;
+}
+.hud-value {
+  font-weight: 900; font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+.hearts { font-size: 1.2rem; letter-spacing: 2px; }
+
+canvas {
+  display: block;
+  background: #000;
+  border-radius: 8px;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
+  touch-action: none;
+  width: 100%;
+  max-width: 900px;
+  height: auto;
+}
+
+.touch-controls {
+  display: none;
+  width: 100%; max-width: 900px;
+  margin-top: 0.6rem;
+  user-select: none;
+}
+.touch-controls.show { display: flex; justify-content: space-between; }
+.touch-controls .pad { display: flex; gap: 0.5rem; }
+.touch-btn {
+  width: 70px; height: 70px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.1);
+  border: 2px solid rgba(255,255,255,0.3);
+  color: #fff;
+  font-size: 1.6rem;
+  font-weight: 900;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+}
+.touch-btn:active { background: rgba(255,255,255,0.25); transform: scale(0.94); }
+
+.overlay {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.86);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 600;
+  animation: fade 0.3s ease;
+}
+@keyframes fade { from { opacity: 0; } }
+
+.endcard {
+  background: #1a1a2e;
+  border: 2px solid currentColor;
+  border-radius: 18px;
+  padding: 2rem 2.4rem;
+  text-align: center;
+  width: min(360px, 90%);
+}
+.endcard h2 { font-size: 2rem; margin-bottom: 0.4rem; font-weight: 900; }
+.endcard p { color: rgba(255,255,255,0.7); margin-bottom: 1.4rem; }
+.endcard .score-line { font-size: 1rem; margin-bottom: 1.6rem; color: #fff; }
+.endcard .score-line b { color: #ffd166; font-size: 1.4rem; }
+.endcard button {
+  padding: 0.8rem 1.6rem;
+  background: currentColor;
+  border: none; border-radius: 10px;
+  font-weight: 800; font-size: 0.95rem;
+  cursor: pointer; margin: 0 0.3rem;
+  letter-spacing: 0.5px;
+}
+.endcard button span { color: #1a1a2e; }
+.endcard a {
+  display: inline-block;
+  padding: 0.8rem 1.6rem;
+  background: rgba(255,255,255,0.1);
+  border-radius: 10px;
+  color: rgba(255,255,255,0.7);
+  text-decoration: none;
+  font-weight: 700; font-size: 0.95rem;
+  margin: 0 0.3rem;
+}
+
+.hidden { display: none !important; }
+
+@media (hover: none) and (pointer: coarse) {
+  .touch-controls { display: flex; justify-content: space-between; }
+}
