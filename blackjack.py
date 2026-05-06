@@ -12,8 +12,10 @@ MAX_PLAYERS        = 4
 LOBBY_WINDOW       = 20    # seconds: join + bet
 TURN_WINDOW        = 30    # seconds per decision
 INSURANCE_WINDOW   = 15
-RESULT_LINGER      = 7
-DEALER_DRAW_DELAY  = 0.9
+RESULT_LINGER      = 8
+DEALER_DRAW_DELAY  = 1.6
+TURN_BANNER_DELAY  = 1.0   # let "X's turn" / "Dealer's turn" banners show
+DEAL_LINGER        = 2.6   # pause after dealing so Blackjack banners are visible
 DEALER_STANDS_ON   = 17    # standard: dealer stands on all 17 (incl. soft)
 BLACKJACK_PAYOUT   = 1.5   # 3:2
 INSURANCE_PAYOUT   = 2     # 2:1
@@ -354,7 +356,7 @@ async def play_round(table: BlackjackTable):
     table.phase_deadline = 0
     deal_initial(table, active)
     await broadcast_state(table)
-    await asyncio.sleep(1.0)
+    await asyncio.sleep(DEAL_LINGER)   # lets Blackjack banner play
 
     dealer_up = table.dealer[0]
     _, _, dealer_bj_potential = hand_value(table.dealer)
@@ -416,7 +418,7 @@ async def play_round(table: BlackjackTable):
     table.dealer_hole_revealed = True
     table.last_action_text = ""
     await broadcast_state(table)
-    await asyncio.sleep(0.6)
+    await asyncio.sleep(TURN_BANNER_DELAY + 0.5)   # banner shows first
 
     # Skip dealer if all players busted/surrendered
     any_live = any(
@@ -509,6 +511,12 @@ def everyone_decided(table):
 
 async def play_player_turn(table: BlackjackTable, p):
     """Play through all hands of one player (split-aware)."""
+    # Brief pause so the "X's turn" banner is readable before action UI appears
+    table.current_pid  = p['id']
+    table.current_hand = p['currentHand']
+    await broadcast_state(table)
+    await asyncio.sleep(TURN_BANNER_DELAY)
+
     while p['currentHand'] < len(p['hands']):
         h = p['hands'][p['currentHand']]
         if h['finished']:

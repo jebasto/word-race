@@ -80,6 +80,7 @@ function onState(msg) {
 
   render();
   detectAnimations(oldState);
+  maybeShowBanner(oldState);
   updateChipsFromState();
 
   prevPhase = msg.phase;
@@ -90,27 +91,49 @@ function detectAnimations(prev) {
   for (const p of state.players) {
     const old = prevPlayers[p.id];
     const oldChips = old?.chips;
-    const oldBet   = old?.firstBet ?? 0;
-    const newBet   = (p.hands?.[0]?.bet) || 0;
+    const oldBet   = old?.totalBet ?? 0;
+    const newBet   = (p.hands || []).reduce((sum, h) => sum + (h.bet || 0), 0);
 
-    // 1) Bet placed: bet went 0 → X. Fly chip from seat to pot.
-    if (newBet > oldBet && (state.phase === 'lobby' || state.phase === 'dealing')) {
-      flyChip(seatEl(p.id), $('pot-anchor'), '-' + (newBet - oldBet), 'bet');
+    // 1) Bet placed (or doubled / split adding chips to pot): chip flies from seat to pot slot.
+    if (newBet > oldBet && (state.phase === 'lobby' || state.phase === 'dealing' || state.phase === 'playing')) {
+      const delta = newBet - oldBet;
+      // Fire 3 chips with cascading delays for a "stack tossed" feel.
+      // Target the pot slot (which we render right after this in maybeShowBanner / renderPotSlots).
+      // Use a short delay so the slot has time to mount.
+      const target = () => potSlotEl(p.id) || $('pot-slots');
+      const seat   = seatEl(p.id);
+      const labels = chipBreakdown(delta);
+      labels.forEach((amt, i) => {
+        setTimeout(() => flyChip(seat, target(), '-' + amt, 'bet'), i * 110);
+      });
     }
 
-    // 2) Payout: chips went up during resolution. Fly chip from pot to seat + show +X.
+    // 2) Chip-count roller animates from old to new (only if we have an old value)
+    if (oldChips != null && oldChips !== p.chips) {
+      const chipEl = document.querySelector(`.seat[data-pid="${p.id}"] .seat-chips`);
+      if (chipEl) {
+        // Set to old immediately to avoid flash, then animate to new
+        chipEl.textContent = oldChips.toLocaleString();
+        animateNumber(chipEl, oldChips, p.chips, 800);
+      }
+    }
+
+    // 3) Payout: chips flies from pot slot back to seat + floating +X
     if (state.phase === 'resolution' && oldChips != null && p.chips > oldChips) {
       const delta = p.chips - oldChips;
-      flyChip($('pot-anchor'), seatEl(p.id), '+' + delta, 'win');
+      const fromEl = potSlotEl(p.id) || $('pot-slots');
+      flyChip(fromEl, seatEl(p.id), '+' + delta, 'win');
       popPayout(p.id, '+' + delta, 'gain');
     }
-    // 3) Loss flash: bet > 0 last hand and result = lose/bust → -bet floater
+
+    // 4) Loss floater
     if (state.phase === 'resolution' && p.hands?.length) {
       for (const h of p.hands) {
-        if (h.result === 'lose' || h.result === 'bust') {
-          if (!old?.lossShown?.[h.bet]) {
+        if ((h.result === 'lose' || h.result === 'bust') && h.bet > 0) {
+          const lossKey = `loss-${h.bet}-${h.cards.length}`;
+          if (!old?.lossShown?.[lossKey]) {
             popPayout(p.id, '-' + h.bet, 'loss');
-            old && (old.lossShown = { ...(old.lossShown||{}), [h.bet]: true });
+            if (old) old.lossShown = { ...(old.lossShown||{}), [lossKey]: true };
           }
         }
       }
@@ -118,10 +141,17 @@ function detectAnimations(prev) {
 
     prevPlayers[p.id] = {
       chips: p.chips,
-      firstBet: newBet,
+      totalBet: newBet,
       lossShown: prevPlayers[p.id]?.lossShown || {},
     };
   }
+}
+
+// Break a bet into 1-3 visible chips so the toss looks substantial
+function chipBreakdown(amount) {
+  if (amount <= 50)   return [amount];
+  if (amount <= 200)  return [Math.floor(amount/2), Math.ceil(amount/2)];
+  return [Math.floor(amount/3), Math.floor(amount/3), amount - 2*Math.floor(amount/3)];
 }
 
 function seatEl(pid) {
@@ -174,6 +204,7 @@ function render() {
   if (!state) return;
   renderPhaseBar();
   renderDealer();
+  renderPotSlots();
   renderSeats();
   renderActionPanel();
   renderEventLog();
@@ -220,6 +251,147 @@ function renderDealer() {
   } else {
     tot.textContent = '';
   }
+}
+
+// Persistent pot slots on the dealer felt
+function renderPotSlots() {
+  const slotsEl = $('pot-slots');
+  // Build a map of slots we want to display
+  const want = new Map();   // pid -> totalBet
+  for (const p of state.players || []) {
+    if (p.skipRound) continue;
+    let total = 0;
+    for (const h of p.hands || []) total += h.bet || 0;
+    if (total > 0 && state.phase !== 'lobby' || (total > 0 && state.phase === 'lobby')) {
+      want.set(p.id, { name: p.name, total });
+    }
+  }
+
+  // Hide pot slots entirely once round resolves and we're back at lobby with no bets
+  if (state.phase === 'lobby' && want.size === 0) {
+    slotsEl.innerHTML = '';
+    return;
+  }
+
+  // Diff against current DOM
+  const have = new Set();
+  [...slotsEl.children].forEach(el => have.add(el.dataset.pid));
+
+  // Add new
+  for (const [pid, info] of want.entries()) {
+    let el = slotsEl.querySelector(`.pot-slot[data-pid="${pid}"]`);
+    if (!el) {
+      el = document.createElement('div');
+      el.className = 'pot-slot' + (pid === myId ? ' you' : '');
+      el.dataset.pid = pid;
+      el.innerHTML = `
+        <div class="pot-chip">${info.total >= 1000 ? '1K' : info.total}</div>
+        <div class="pot-name">${esc(info.name)}</div>
+        <div class="pot-amount" data-amt>${info.total}</div>
+      `;
+      slotsEl.appendChild(el);
+    } else {
+      const amtEl = el.querySelector('[data-amt]');
+      const cur = parseInt(amtEl.textContent, 10) || 0;
+      if (cur !== info.total) animateNumber(amtEl, cur, info.total, 600);
+      el.querySelector('.pot-chip').textContent = info.total >= 1000 ? '1K' : info.total;
+    }
+  }
+
+  // Remove gone (with fade)
+  [...slotsEl.children].forEach(el => {
+    const pid = el.dataset.pid;
+    if (!want.has(pid) && !el.classList.contains('fading')) {
+      el.classList.add('fading');
+      setTimeout(() => el.remove(), 600);
+    }
+  });
+}
+
+function potSlotEl(pid) {
+  return document.querySelector(`.pot-slot[data-pid="${pid}"]`);
+}
+
+// ── Banners (turn change / Blackjack) ──────────────────────────────
+let lastBannerKey = '';
+let bannerTimer   = null;
+let announcedBJs  = new Set();
+
+function showBanner(text, kind = 'normal') {
+  const el = $('banner');
+  el.textContent = text;
+  el.className = 'banner ' + kind;
+  el.classList.remove('hidden');
+  // Force animation restart
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = '';
+  if (bannerTimer) clearTimeout(bannerTimer);
+  const ms = kind === 'bj' ? 2700 : 2100;
+  bannerTimer = setTimeout(() => el.classList.add('hidden'), ms);
+}
+
+function maybeShowBanner(prev) {
+  if (!state) return;
+
+  // Blackjack at deal-time: show as soon as we see a BJ hand and haven't announced it
+  if (state.phase === 'dealing' || state.phase === 'playing' || state.phase === 'insurance') {
+    for (const p of state.players || []) {
+      for (const h of p.hands || []) {
+        if (h.isBlackjack && h.cards.length === 2) {
+          const key = `bj-${p.id}-${h.cards.length}`;
+          if (!announcedBJs.has(key)) {
+            announcedBJs.add(key);
+            showBanner(`${p.name.toUpperCase()} — BLACKJACK!`, 'bj');
+            return;   // one banner at a time
+          }
+        }
+      }
+    }
+  }
+
+  // Player turn change
+  if (state.phase === 'playing' && state.currentPid) {
+    const key = `turn-${state.currentPid}-${state.currentHandIdx}`;
+    if (key !== lastBannerKey) {
+      lastBannerKey = key;
+      const p = (state.players || []).find(x => x.id === state.currentPid);
+      if (p) {
+        const text = p.id === myId ? 'YOUR TURN' : `${p.name.toUpperCase()}'S TURN`;
+        showBanner(text);
+      }
+    }
+    return;
+  }
+
+  // Dealer turn
+  if (state.phase === 'dealer') {
+    const key = 'dealer-turn';
+    if (key !== lastBannerKey) {
+      lastBannerKey = key;
+      showBanner("DEALER'S TURN", 'dealer');
+    }
+    return;
+  }
+
+  // Reset banner key when round resets
+  if (state.phase === 'lobby') {
+    lastBannerKey = '';
+    announcedBJs.clear();
+  }
+}
+
+// ── Animated chip-count roller ─────────────────────────────────────
+function animateNumber(el, from, to, duration = 700) {
+  const start = performance.now();
+  const delta = to - from;
+  const tick  = (now) => {
+    const t = Math.min(1, (now - start) / duration);
+    const eased = 1 - Math.pow(1 - t, 3);   // ease-out
+    el.textContent = Math.round(from + delta * eased).toLocaleString();
+    if (t < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 
 function renderSeats() {

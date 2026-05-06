@@ -45,8 +45,12 @@
     <div class="dealer-area" id="dealer-area">
       <div class="dealer-name">DEALER <span id="dealer-total"></span></div>
       <div class="hand" id="dealer-hand"></div>
-      <div id="pot-anchor" style="position:absolute;left:50%;top:50%;width:1px;height:1px;"></div>
+      <!-- Persistent pot showing each player's bet on the felt -->
+      <div class="pot-slots" id="pot-slots"></div>
     </div>
+
+    <!-- Big turn / blackjack banner overlay -->
+    <div id="banner" class="banner hidden"></div>
 
     <!-- Player seats -->
     <div class="seats" id="seats"></div>
