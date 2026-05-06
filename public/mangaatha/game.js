@@ -256,6 +256,11 @@ const api = {
     G.cutscene = 'win' + G.level;
     show('cutscene');
   },
+  gainLife() {
+    G.lives = Math.min(99, G.lives + 1);
+    updateLivesHud();
+    saveSave();
+  },
   lose() {
     G.lives = Math.max(0, G.lives - 1);
     saveSave();
@@ -360,6 +365,9 @@ window.addEventListener('keydown', e => {
       e.preventDefault();
       if (!e.repeat) Level1.jumpPress();
       Level1.jumpHold(true);
+    } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
+      e.preventDefault();
+      if (!e.repeat) Level1.boardPress();
     }
   } else if (G.level === 2) {
     const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',

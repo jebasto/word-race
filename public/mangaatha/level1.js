@@ -4,27 +4,30 @@
 
 // Level 1 tunables — adjust these to change feel
 const L1_TUNE = {
-  W: 880, H: 320,
-  GROUND: 260,
+  W: 880, H: 340,
+  GROUND: 290,             // feet position; road extends below this
   MURU_X: 160,
-  MURU_SCALE: 0.62,         // Muru is drawn smaller relative to obstacles
+  MURU_SCALE: 0.62,
   // Jump physics
-  JUMP_VY: -10.5,           // initial impulse
-  GRAVITY_NORMAL: 0.55,     // gravity when not holding jump
-  GRAVITY_HOLD:   0.28,     // gravity while jump held (during ascent)
-  JUMP_HOLD_FRAMES: 16,     // up to N frames of reduced gravity
+  JUMP_VY: -10.8,
+  GRAVITY_NORMAL: 0.55,
+  GRAVITY_HOLD:   0.27,
+  JUMP_HOLD_FRAMES: 17,
   // Speed
-  SPEED_MIN: 3.0,
-  SPEED_MAX: 5.6,
-  SPEED_RAMP_DIST: 5000,
+  SPEED_MIN: 3.6,
+  SPEED_MAX: 6.6,
+  SPEED_RAMP_DIST: 4500,
   // Spacing
   GAP_MIN: 290,
   GAP_MAX: 560,
   // Obstacle queue
   TOTAL_OBSTACLES: 45,
+  NUM_AUTOS: 2,
+  NUM_HEARTS: 3,
   // Power-up
   RIDE_FRAMES: 300,
-  RIDE_GRACE: 60,           // invuln frames after dismount
+  RIDE_GRACE: 90,
+  RIDE_BOARD_RANGE: 220,   // px window where boarding is allowed (rightward)
 };
 
 const L1 = {
@@ -50,10 +53,12 @@ const L1 = {
   saree: null,
   bg: { far: 0, mid: 0, near: 0, ground: 0 },
   particles: [],
-  jumpPress: false,    // edge-triggered: set true once on press
-  jumpHeld:  false,    // continuous hold state
+  jumpPress: false,
+  jumpHeld:  false,
+  downPress: false,    // edge-triggered "board the auto" key
   totalObstacles: 0,
   lastEndline: 0,
+  boardPossible: false,   // is there a nearby auto to board right now?
 };
 
 // Obstacle definitions — each draw fn takes (cx, x, baseY, frame)
@@ -118,28 +123,54 @@ const OB_TYPES = {
     }
   },
   dog: {
-    w: 40, h: 30,
+    w: 44, h: 30,
     draw(cx, x, by, t) {
       cx.save(); cx.translate(x, by);
       const wob = Math.sin(t * 0.1) * 1;
+      const FUR  = '#E8C28A';     // light tan — pops on dark road
+      const FUR2 = '#C8965A';     // shadow tone
+      const PAW  = '#8B5A2A';
+      // Tail (animated)
+      cx.strokeStyle = PAW; cx.lineWidth = 3; cx.lineCap = 'round';
+      cx.beginPath();
+      cx.moveTo(38, -18 + wob);
+      cx.quadraticCurveTo(46 + Math.sin(t * 0.2) * 2, -22 + wob, 44, -30 + wob);
+      cx.stroke();
       // Body
-      ol(cx, () => { cx.beginPath(); rR(cx, 4, -22 + wob, 30, 14, 6); }, '#A0522D');
+      ol(cx, () => { cx.beginPath(); rR(cx, 4, -22 + wob, 32, 14, 7); }, FUR, 1.5);
+      // Belly highlight
+      cx.fillStyle = 'rgba(255,255,255,0.3)';
+      cx.fillRect(8, -12 + wob, 24, 3);
       // Head
-      ol(cx, () => { cx.beginPath(); cx.arc(2, -20 + wob, 8, 0, Math.PI*2); }, '#A0522D');
-      // Ear
-      ol(cx, () => { cx.beginPath(); cx.moveTo(-2, -28 + wob); cx.lineTo(-6, -22 + wob); cx.lineTo(0, -20 + wob); cx.closePath(); }, '#5D3A1A');
-      // Eye
-      cx.fillStyle = BL; cx.beginPath(); cx.arc(-2, -20 + wob, 1.2, 0, Math.PI*2); cx.fill();
-      // Nose
-      cx.fillStyle = BL; cx.beginPath(); cx.arc(-7, -18 + wob, 1.5, 0, Math.PI*2); cx.fill();
-      // Tail
-      cx.strokeStyle = '#5D3A1A'; cx.lineWidth = 2.5; cx.lineCap = 'round';
-      cx.beginPath(); cx.moveTo(34, -18 + wob); cx.quadraticCurveTo(40 + Math.sin(t*0.2)*2, -22 + wob, 38, -28 + wob); cx.stroke();
+      ol(cx, () => { cx.beginPath(); cx.arc(4, -20 + wob, 9, 0, Math.PI * 2); }, FUR, 1.5);
+      // Snout
+      cx.fillStyle = FUR2;
+      cx.beginPath(); cx.ellipse(-4, -18 + wob, 5, 3, 0, 0, Math.PI * 2); cx.fill();
+      // Brown ears (floppy)
+      ol(cx, () => {
+        cx.beginPath();
+        cx.moveTo(0, -28 + wob); cx.quadraticCurveTo(-4, -22 + wob, -2, -16 + wob);
+        cx.lineTo(2, -20 + wob); cx.closePath();
+      }, PAW, 1.2);
+      ol(cx, () => {
+        cx.beginPath();
+        cx.moveTo(8, -28 + wob); cx.quadraticCurveTo(12, -22 + wob, 10, -16 + wob);
+        cx.lineTo(6, -20 + wob); cx.closePath();
+      }, PAW, 1.2);
+      // Eye + nose + tongue
+      cx.fillStyle = BL;
+      cx.beginPath(); cx.arc(0, -20 + wob, 1.3, 0, Math.PI * 2); cx.fill();
+      cx.beginPath(); cx.arc(-7, -18 + wob, 1.6, 0, Math.PI * 2); cx.fill();
+      cx.fillStyle = '#E91E63';
+      cx.fillRect(-9, -16 + wob, 3, 2);
+      // Brown patch on body
+      cx.fillStyle = PAW;
+      cx.beginPath(); cx.ellipse(20, -18 + wob, 5, 4, 0, 0, Math.PI * 2); cx.fill();
       // Legs
-      cx.fillStyle = '#A0522D';
-      const ls = Math.sin(t*0.3) * 2;
-      [8, 16, 24, 30].forEach((lx, i) => {
-        cx.fillRect(lx, -10, 3, 10 + (i%2===0 ? ls : -ls));
+      const ls = Math.sin(t * 0.3) * 2;
+      cx.fillStyle = FUR2;
+      [8, 16, 26, 32].forEach((lx, i) => {
+        cx.fillRect(lx, -10, 3, 10 + (i % 2 === 0 ? ls : -ls));
       });
       cx.restore();
     }
@@ -498,6 +529,76 @@ function drawMuruRider(cx, x, y, t) {
   cx.restore();
 }
 
+// Heart pickup (+1 life), floats mid-air requiring a held jump to grab
+function drawHeart(cx, x, y, t) {
+  const float = Math.sin(t * 0.06) * 4;
+  const pulse = 1 + Math.sin(t * 0.14) * 0.08;
+  cx.save(); cx.translate(x, y + float);
+  // Glow
+  const grd = cx.createRadialGradient(0, 0, 4, 0, 0, 34 * pulse);
+  grd.addColorStop(0,    'rgba(255,120,170,0.7)');
+  grd.addColorStop(0.6,  'rgba(255,80,140,0.30)');
+  grd.addColorStop(1,    'rgba(255,80,140,0)');
+  cx.fillStyle = grd;
+  cx.fillRect(-36, -36, 72, 72);
+  cx.scale(pulse, pulse);
+  // Heart shape
+  cx.fillStyle = '#E91E63';
+  cx.strokeStyle = BL; cx.lineWidth = 1.6; cx.lineJoin = 'round';
+  cx.beginPath();
+  cx.moveTo(0, 8);
+  cx.bezierCurveTo(-14, -4, -14, -18, 0, -10);
+  cx.bezierCurveTo(14, -18, 14, -4, 0, 8);
+  cx.closePath();
+  cx.fill(); cx.stroke();
+  // Highlight
+  cx.fillStyle = 'rgba(255,255,255,0.7)';
+  cx.beginPath(); cx.ellipse(-4, -6, 2.2, 3.3, 0.4, 0, Math.PI * 2); cx.fill();
+  // "+1"
+  cx.scale(1 / pulse, 1 / pulse);
+  cx.fillStyle = '#fff';
+  cx.font = 'bold 10px sans-serif'; cx.textAlign = 'center';
+  cx.fillText('+1', 0, -2);
+  cx.textAlign = 'left';
+  cx.restore();
+  // Sparkles around
+  for (let i = 0; i < 3; i++) {
+    const a = (t * 0.07 + i * Math.PI * 2 / 3);
+    cx.fillStyle = 'rgba(255,255,255,0.8)';
+    cx.beginPath();
+    cx.arc(x + Math.cos(a) * 26, y + Math.sin(a) * 18 + float, 1.5, 0, Math.PI * 2);
+    cx.fill();
+  }
+}
+
+// Floating "Press ⬇" prompt above an approaching auto
+function drawBoardPrompt(cx, x, y, t) {
+  const bob = Math.sin(t * 0.18) * 3;
+  cx.save();
+  cx.translate(x, y + bob);
+  // Glow
+  const grd = cx.createRadialGradient(0, 0, 4, 0, 0, 50);
+  grd.addColorStop(0, 'rgba(255,255,255,0.45)');
+  grd.addColorStop(1, 'rgba(255,255,255,0)');
+  cx.fillStyle = grd; cx.fillRect(-50, -30, 100, 60);
+  // Pill background
+  ol(cx, () => { cx.beginPath(); rR(cx, -52, -18, 104, 32, 16); }, '#1A1A1A', 2.5);
+  cx.fillStyle = '#F4C430';
+  cx.fillRect(-50, -16, 100, 4);
+  // Down-arrow chevron
+  cx.fillStyle = '#F4C430';
+  cx.beginPath();
+  cx.moveTo(-32, -8); cx.lineTo(-20, -8); cx.lineTo(-26, 4); cx.closePath();
+  cx.fill();
+  cx.strokeStyle = BL; cx.lineWidth = 1.5; cx.stroke();
+  // Text
+  cx.fillStyle = '#fff';
+  cx.font = 'bold 13px sans-serif';
+  cx.textAlign = 'left';
+  cx.fillText('PRESS  ⬇', -14, 4);
+  cx.restore();
+}
+
 // Saree token at the end — a flowing, draped Kanjivaram fabric
 function drawSaree(cx, x, y, t) {
   cx.save(); cx.translate(x, y);
@@ -810,27 +911,31 @@ function drawL1Bg(cx, W, H, frame) {
     drawLamp(cx, bx + 256, H - 48);
   }
 
-  // Foreground sidewalk strip (parallax matches ground)
+  // Sidewalk above the road (curb edge), then road extends right up to the
+  // ground line so obstacles look planted ON the road, not floating above it.
   cx.fillStyle = '#9A7A5A';
-  cx.fillRect(0, L1.GROUND - 22, W, 18);
+  cx.fillRect(0, L1.GROUND - 32, W, 22);
   cx.fillStyle = '#7A5A3A';
-  cx.fillRect(0, L1.GROUND - 4, W, 4);
+  cx.fillRect(0, L1.GROUND - 12, W, 4);
 
-  // Ground (street)
-  cx.fillStyle = '#5A3A1A';
-  cx.fillRect(0, L1.GROUND + 4, W, H - L1.GROUND - 4);
-  cx.fillStyle = '#3A2010';
-  cx.fillRect(0, L1.GROUND + 4, W, 4);
-  // Center yellow lane line — moving
+  // Road surface — starts AT the ground line (no gap)
+  cx.fillStyle = '#3D2614';
+  cx.fillRect(0, L1.GROUND - 8, W, H - L1.GROUND + 8);
+  // Curb shadow
+  cx.fillStyle = '#1F1208';
+  cx.fillRect(0, L1.GROUND - 8, W, 4);
+  // Subtle gravel speckles on the road
   const lineOff = -L1.bg.ground;
-  cx.fillStyle = '#FFD700';
-  for (let gx = lineOff % 80; gx < W + 50; gx += 80) {
-    cx.fillRect(gx, L1.GROUND + 30, 36, 4);
+  cx.fillStyle = 'rgba(150,120,80,0.25)';
+  for (let i = 0; i < 22; i++) {
+    const sx = ((i * 73 + lineOff) % (W + 40));
+    const sy = L1.GROUND + 4 + (i * 17) % (H - L1.GROUND - 8);
+    cx.fillRect(sx, sy, 1.5, 1.5);
   }
-  // Ground tile seams
-  cx.strokeStyle = 'rgba(0,0,0,0.25)'; cx.lineWidth = 1;
-  for (let gx = lineOff % 60; gx < W + 50; gx += 60) {
-    cx.beginPath(); cx.moveTo(gx, L1.GROUND + 8); cx.lineTo(gx, H); cx.stroke();
+  // Subtle dashed center line (low intensity)
+  cx.fillStyle = 'rgba(244,196,48,0.32)';
+  for (let gx = lineOff % 110; gx < W + 50; gx += 110) {
+    cx.fillRect(gx, L1.GROUND + 28, 22, 2);
   }
 }
 
@@ -858,10 +963,21 @@ function generateL1Queue() {
   for (let i = 0; i < 8; i++) {
     if (big.has(q[i])) q[i] = ['peel','dog','puddle','pothole'][Math.floor(Math.random()*4)];
   }
-  // Insert 3 auto power-ups roughly evenly
-  [12, 24, 36].forEach((idx, i) => {
-    const jitter = Math.floor(Math.random() * 4) - 2;
-    q.splice(idx + i + jitter, 0, '__auto__');
+  // Insert auto power-ups (NUM_AUTOS) roughly evenly distributed
+  const autoSpots = [];
+  for (let i = 0; i < L1_TUNE.NUM_AUTOS; i++) {
+    autoSpots.push(8 + Math.floor((q.length / L1_TUNE.NUM_AUTOS) * (i + 0.5)) + Math.floor(Math.random()*4-2));
+  }
+  autoSpots.sort((a,b) => a-b).forEach((idx, i) => {
+    q.splice(idx + i, 0, '__auto__');
+  });
+  // Insert heart pickups
+  const heartSpots = [];
+  for (let i = 0; i < L1_TUNE.NUM_HEARTS; i++) {
+    heartSpots.push(5 + Math.floor((q.length / L1_TUNE.NUM_HEARTS) * (i + 0.4)) + Math.floor(Math.random()*5-2));
+  }
+  heartSpots.sort((a,b) => a-b).forEach((idx, i) => {
+    q.splice(idx + i, 0, '__heart__');
   });
   return q;
 }
@@ -915,22 +1031,26 @@ function updateL1(api) {
     L1.muru.ridingT--;
     L1.muru.y = L1.GROUND;
     L1.muru.vy = 0;
-    // Just before dismount → clear any obstacles in the immediate landing zone
-    if (L1.muru.ridingT === 30) {
+    // Continuously clear the landing zone for the final ride frames so no
+    // obstacle can sneak in between checks. Also push next-spawn far back.
+    if (L1.muru.ridingT <= 45) {
       L1.obstacles.forEach(o => {
-        if (o.kind !== 'auto' && o.x > L1.MURU_X - 40 && o.x < L1.MURU_X + 260) {
-          for (let i = 0; i < 10; i++) {
+        if (o.kind !== 'auto' && o.kind !== 'heart' && !o.flying
+            && o.x > L1.MURU_X - 60 && o.x < L1.MURU_X + 240) {
+          o.flying = true;
+          o.fvx = 6 + Math.random() * 6;
+          o.fvy = -11 - Math.random() * 4;
+          o.rotV = (Math.random() - 0.5) * 0.45;
+          for (let i = 0; i < 6; i++) {
             L1.particles.push({
               x: o.x + o.w / 2, y: o.baseY - o.h / 2,
-              vx: 3 + Math.random() * 6, vy: -3 - Math.random() * 5,
-              life: 30 + Math.random() * 10, color: i % 2 ? '#F4C430' : '#fff'
+              vx: 3 + Math.random() * 6, vy: -4 - Math.random() * 5,
+              life: 30, color: i % 2 ? '#F4C430' : '#fff'
             });
           }
-          o.x = -400;
         }
       });
-      // Ensure the next spawn is also pushed back so the player has breathing room
-      L1.nextSpawnX = Math.max(L1.nextSpawnX, L1.W + 220);
+      L1.nextSpawnX = Math.max(L1.nextSpawnX, L1.W + 280);
     }
     if (L1.muru.ridingT <= 0) {
       L1.muru.riding = false;
@@ -964,14 +1084,24 @@ function updateL1(api) {
     }
   }
 
-  // Spawn obstacles
+  // Spawn obstacles / pickups
   if (L1.queue.length > 0 && L1.nextSpawnX <= L1.W + 60) {
     const type = L1.queue.shift();
     if (type === '__auto__') {
       L1.obstacles.push({
         kind: 'auto', x: L1.W + 50,
         w: POWERUP_AUTO.w, h: POWERUP_AUTO.h,
-        baseY: L1.GROUND
+        baseY: L1.GROUND,
+        flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
+      });
+    } else if (type === '__heart__') {
+      L1.obstacles.push({
+        kind: 'heart', x: L1.W + 50,
+        w: 38, h: 38,
+        baseY: L1.GROUND,
+        // Floating mid-air, varying height. Reachable with a held jump.
+        floatY: L1.GROUND - 95 - Math.random() * 35,
+        flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
     } else {
       const def = OB_TYPES[type];
@@ -979,10 +1109,10 @@ function updateL1(api) {
       L1.obstacles.push({
         kind: type, x: L1.W + 50,
         w: def.w, h: def.h,
-        baseY: L1.GROUND
+        baseY: L1.GROUND,
+        flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
     }
-    // Random gap (wider so variable-height jumps land cleanly)
     L1.nextSpawnX = L1.W + 50 + L1_TUNE.GAP_MIN + Math.random() * (L1_TUNE.GAP_MAX - L1_TUNE.GAP_MIN);
   } else {
     L1.nextSpawnX -= L1.speed;
@@ -996,12 +1126,21 @@ function updateL1(api) {
     }
   }
 
-  // Move obstacles + saree left
-  L1.obstacles.forEach(o => o.x -= L1.speed);
+  // Move obstacles + saree left (or fly away if smashed)
+  L1.obstacles.forEach(o => {
+    if (o.flying) {
+      o.x  += o.fvx;
+      o.dy += o.fvy;
+      o.fvy += 0.45;
+      o.rot += o.rotV;
+    } else {
+      o.x -= L1.speed;
+    }
+  });
   if (L1.saree) L1.saree.x -= L1.speed;
 
-  // Despawn off-screen
-  L1.obstacles = L1.obstacles.filter(o => o.x + o.w > -50);
+  // Despawn off-screen (horizontally or fallen way below)
+  L1.obstacles = L1.obstacles.filter(o => o.x + o.w > -100 && o.x < L1.W + 400 && o.dy < L1.H + 200);
 
   // Cooldown
   if (L1.hitCooldown > 0) L1.hitCooldown--;
@@ -1015,41 +1154,84 @@ function updateL1(api) {
     h: 60 * sc,
   };
 
-  for (const o of L1.obstacles) {
-    const obBox = { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
-    if (boxOverlap(muruBox, obBox)) {
-      if (o.kind === 'auto') {
-        if (!L1.muru.riding) {
-          L1.muru.riding = true;
-          L1.muru.ridingT = L1_TUNE.RIDE_FRAMES;
-          // Sparkle particles
-          for (let i = 0; i < 14; i++) {
-            L1.particles.push({
-              x: L1.MURU_X, y: L1.muru.y - 30,
-              vx: (Math.random() - 0.5) * 6, vy: -2 - Math.random() * 4,
-              life: 30 + Math.random() * 20, color: '#F4C430'
-            });
-          }
-          api.toast('AUTO BOOST! 5 seconds invincible!');
-          o.x = -200;   // remove
-        }
-      } else if (L1.muru.riding) {
-        // Ride blitz — destroy obstacle
-        for (let i = 0; i < 8; i++) {
-          L1.particles.push({
-            x: o.x + o.w/2, y: o.baseY - o.h/2,
-            vx: 2 + Math.random() * 4, vy: -2 - Math.random() * 4,
-            life: 25, color: '#fff'
-          });
-        }
-        o.x = -200;
-      } else if (L1.hitCooldown <= 0) {
-        // Take a hit
-        api.lifeLost();
-        L1.hitCooldown = 90;   // 1.5s invuln
-        // Knockback
-        L1.muru.vy = -8;
+  // Detect "boarding possible" — any approaching auto in window?
+  L1.boardPossible = false;
+  if (!L1.muru.riding) {
+    for (const o of L1.obstacles) {
+      if (o.kind !== 'auto' || o.flying) continue;
+      if (o.x > L1.MURU_X - 80 && o.x < L1.MURU_X + L1_TUNE.RIDE_BOARD_RANGE) {
+        L1.boardPossible = true;
+        break;
       }
+    }
+  }
+
+  // Process explicit DOWN-press to board
+  if (L1.downPress && L1.boardPossible && !L1.muru.riding) {
+    const auto = L1.obstacles.find(o =>
+      o.kind === 'auto' && !o.flying &&
+      o.x > L1.MURU_X - 80 && o.x < L1.MURU_X + L1_TUNE.RIDE_BOARD_RANGE
+    );
+    if (auto) {
+      L1.muru.riding  = true;
+      L1.muru.ridingT = L1_TUNE.RIDE_FRAMES;
+      auto.x = -500;
+      for (let i = 0; i < 18; i++) {
+        L1.particles.push({
+          x: L1.MURU_X, y: L1.muru.y - 30,
+          vx: (Math.random() - 0.5) * 8, vy: -3 - Math.random() * 5,
+          life: 40 + Math.random() * 20, color: i % 2 ? '#F4C430' : '#fff'
+        });
+      }
+      api.toast('⚡ AUTO BOOST! Blitz mode!');
+    }
+  }
+  L1.downPress = false;
+
+  for (const o of L1.obstacles) {
+    if (o.flying) continue;
+    const obBox = (o.kind === 'heart')
+      ? { x: o.x + 4, y: o.floatY - 18, w: o.w - 8, h: o.h - 4 }
+      : { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
+    if (!boxOverlap(muruBox, obBox)) continue;
+
+    if (o.kind === 'auto') {
+      // No more auto-board on touch; user must press DOWN.
+      // Pass through the auto harmlessly.
+      continue;
+    }
+    if (o.kind === 'heart') {
+      api.gainLife();
+      o.x = -500;
+      for (let i = 0; i < 14; i++) {
+        L1.particles.push({
+          x: L1.MURU_X, y: L1.muru.y - 40,
+          vx: (Math.random() - 0.5) * 6, vy: -2 - Math.random() * 4,
+          life: 35, color: i % 2 ? '#E91E63' : '#fff'
+        });
+      }
+      api.toast('💖 +1 LIFE!');
+      continue;
+    }
+    if (L1.muru.riding) {
+      // Smash: launch obstacle into the air
+      o.flying = true;
+      o.fvx = 6 + Math.random() * 6;
+      o.fvy = -11 - Math.random() * 4;
+      o.rotV = (Math.random() - 0.5) * 0.45;
+      for (let i = 0; i < 12; i++) {
+        L1.particles.push({
+          x: o.x + o.w / 2, y: o.baseY - o.h / 2,
+          vx: 3 + Math.random() * 7, vy: -4 - Math.random() * 5,
+          life: 35, color: i % 2 ? '#F4C430' : '#fff'
+        });
+      }
+      continue;
+    }
+    if (L1.hitCooldown <= 0) {
+      api.lifeLost();
+      L1.hitCooldown = 90;
+      L1.muru.vy = -8;
     }
   }
 
@@ -1099,8 +1281,28 @@ function renderL1(cx) {
 
   // Obstacles
   for (const o of L1.obstacles) {
-    if (o.kind === 'auto') POWERUP_AUTO.draw(cx, o.x, o.baseY, L1.frame);
-    else                    OB_TYPES[o.kind].draw(cx, o.x, o.baseY, L1.frame);
+    const drawIt = (rotateOrigin) => {
+      if (o.kind === 'auto') POWERUP_AUTO.draw(cx, o.x, o.baseY + o.dy, L1.frame);
+      else if (o.kind === 'heart') drawHeart(cx, o.x + o.w / 2, o.floatY + o.dy, L1.frame);
+      else                          OB_TYPES[o.kind].draw(cx, o.x, o.baseY + o.dy, L1.frame);
+    };
+    if (o.flying) {
+      cx.save();
+      cx.translate(o.x + o.w / 2, o.baseY - o.h / 2 + o.dy);
+      cx.rotate(o.rot);
+      cx.translate(-o.x - o.w / 2, -o.baseY + o.h / 2);
+      OB_TYPES[o.kind] && OB_TYPES[o.kind].draw(cx, o.x, o.baseY, L1.frame);
+      cx.restore();
+    } else {
+      drawIt();
+    }
+  }
+
+  // Boarding prompt above the auto when DOWN can board
+  if (L1.boardPossible && !L1.muru.riding) {
+    const auto = L1.obstacles.find(o => o.kind === 'auto' && !o.flying
+      && o.x > L1.MURU_X - 80 && o.x < L1.MURU_X + L1_TUNE.RIDE_BOARD_RANGE);
+    if (auto) drawBoardPrompt(cx, auto.x + auto.w / 2, auto.baseY - 78, L1.frame);
   }
 
   // Saree
@@ -1162,6 +1364,10 @@ const Level1 = {
     L1.jumpHeld = !!on;
     if (on) this.jumpPress();
   },
+  boardPress() {
+    if (L1.state === 'running') L1.downPress = true;
+  },
+  isBoardPossible() { return L1.boardPossible; },
   update(api) { updateL1(api || this.api); },
   render(cx)  { renderL1(cx); },
   reset()     { resetL1(); },
