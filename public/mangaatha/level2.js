@@ -135,9 +135,6 @@ function resetL2() {
   // Vision range: 2 guards see only 1 cell (50px). 1 guard ("captain") sees 2 cells (100px).
   const MIN_SPAWN_DIST = 5;   // Manhattan distance, in cells
   const MIN_WAYPOINT_DIST = 4;
-  const reachArr = [...reach].map(k => k.split(',').map(Number));
-  const farFromStart = (cell) =>
-    (Math.abs(cell[0] - 1) + Math.abs(cell[1] - 1)) >= MIN_SPAWN_DIST;
   const pickFar = (excluded, minD = MIN_SPAWN_DIST) => {
     const candidates = reachArr.filter(([x, y]) => {
       if ((Math.abs(x - 1) + Math.abs(y - 1)) < minD) return false;
