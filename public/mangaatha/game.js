@@ -1,332 +1,347 @@
-// Mangaatha — Dave-style adventure: collect the cup, then reach the door.
-//
-// Tile chars: . air  X brick  _ brick-top  # decorative  E walker  F fast
-//             * coin  S spike  C cup  G door (locked until cup taken)  P start
-
-const LEVEL = `
-............................................................................................
-............................................................................................
-.................###.............................................###.....C.................
-............................................................................................
-.........*..*.................*....................*..*.....___________.....................
-............................................................................................
-.................________..............____...............E.................................
-....P.................................................................________..............
-________________........________..E........________________..E.....___________......_______G
-XXXXXXXXXXXXXXXX___..___XXXXXXXX____________XXXXXXXXXXXXXXXX___..___XXXXXXXXXXX___..__XXXXXXX
-XXXXXXXXXXXXXXXXXXSSXXXXXXXXXXXXXXXXSSXXXXXXXXXXXXXXXXXXXXXXXXSSXXXXXXXXXXXXXXXXSSXXXXXXXXXXX
-XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-`;
-
+// Mangaatha — main game loop, screen manager, persistence, glue.
 const $ = id => document.getElementById(id);
+const PROGRESS_KEY = 'mangaatha.save.v1';
 
-const theme = {
-  bg(ctx, W, H, camX) {
-    const g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#08182f');
-    g.addColorStop(0.5, '#1a3a6f');
-    g.addColorStop(1, '#5a4a30');
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+// ── Persistence ──────────────────────────────────────────────────
+function loadSave() {
+  try {
+    const raw = localStorage.getItem(PROGRESS_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return { done: [], lives: 3 };
+}
+function saveSave() {
+  try { localStorage.setItem(PROGRESS_KEY, JSON.stringify({ done: G.done, lives: G.lives })); } catch {}
+}
+function clearSave() { try { localStorage.removeItem(PROGRESS_KEY); } catch {} }
 
-    // Stars
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    for (let i = 0; i < 60; i++) {
-      const sx = ((i * 67 - camX * 0.05) % (W + 200)) - 50;
-      const sy = (i * 31) % (H * 0.45);
-      const sz = (i % 3) === 0 ? 2 : 1;
-      ctx.fillRect(sx, sy, sz, sz);
+// ── State ────────────────────────────────────────────────────────
+const persist = loadSave();
+const G = {
+  screen: 'menu',
+  level: 0,
+  done: persist.done.slice(),
+  lives: persist.lives ?? 3,
+  cutscene: null,
+  cutLine: 0,
+  cutFrame: 0,
+  rafId: null,
+  active: null,   // current Level1/Level2 object
+  hint: '',
+};
+
+// ── Screen manager ───────────────────────────────────────────────
+function show(screen) {
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('show'));
+  $('s-' + screen).classList.add('show');
+  G.screen = screen;
+  // Touch pad only relevant in level 2
+  $('touch-pad').classList.toggle('hidden', !(screen === 'game' && G.level === 2));
+  cancelAnimationFrame(G.rafId);
+  if (screen === 'menu')      enterMenu();
+  if (screen === 'family')    enterFamily();
+  if (screen === 'cutscene')  enterCutscene();
+  if (screen === 'game')      enterGame();
+  if (screen === 'fail')      enterFail();
+  if (screen === 'end')       enterEnd();
+}
+
+// ── Menu ─────────────────────────────────────────────────────────
+function enterMenu() {
+  const pct = G.done.length * 12.5;
+  $('menu-progress').style.width = pct + '%';
+  $('menu-progress-pct').textContent = pct;
+}
+
+// ── Family showcase ──────────────────────────────────────────────
+function enterFamily() {
+  const grid = $('family-grid');
+  grid.innerHTML = '';
+  FAMILY.forEach(m => {
+    const card = document.createElement('div');
+    card.className = 'fam-card';
+    const isDone = G.done.includes(m.id);
+    const isUnlocked = m.id <= (G.done.length + 1);
+    if (isDone) card.classList.add('done');
+    if (!isUnlocked) card.classList.add('locked');
+    const status = isDone ? '✅' : (isUnlocked ? '🎯' : '🔒');
+    card.innerHTML = `
+      <div class="fam-status">${status}</div>
+      <canvas width="120" height="170"></canvas>
+      <div class="fam-name">${m.name}</div>
+      <div class="fam-rel">${m.rel}</div>
+    `;
+    grid.appendChild(card);
+    const cv = card.querySelector('canvas');
+    let f = Math.random() * 100;
+    function animate() {
+      const cx = cv.getContext('2d');
+      cx.clearRect(0,0,cv.width, cv.height);
+      m.draw(cx, cv.width/2, cv.height - 5, f);
+      f += 1;
+      card._raf = requestAnimationFrame(animate);
     }
+    animate();
+    card.addEventListener('click', () => {
+      if (!isUnlocked) return;
+      $('family-detail').classList.remove('hidden');
+      $('family-detail').innerHTML = `
+        <h3>${m.name}</h3>
+        <div class="rel">${m.rel}</div>
+        <div class="wants">"${m.want}"</div>
+      `;
+    });
+  });
+  $('family-detail').classList.add('hidden');
+}
 
-    // Distant fort silhouettes (parallax)
-    ctx.fillStyle = 'rgba(20,10,5,0.85)';
-    const o1 = -camX * 0.18 % 320;
-    for (let bx = o1; bx < W + 200; bx += 320) {
-      ctx.fillRect(bx, H*0.55, 100, H*0.25);
-      ctx.fillRect(bx + 30, H*0.48, 40, H*0.32);
-      ctx.fillRect(bx + 110, H*0.6, 70, H*0.2);
+// ── Cutscene ─────────────────────────────────────────────────────
+let cutTyper = null;
+function enterCutscene() {
+  G.cutFrame = 0;
+  G.cutLine = 0;
+  showCutLine();
+  cutLoop();
+}
+function cutLoop() {
+  G.cutFrame++;
+  const scene = SCENES[G.cutscene];
+  if (!scene) return;
+  const line = scene[G.cutLine];
+  if (line) {
+    drawCutsceneAvatar($('cut-canvas'), line.who, G.cutFrame);
+  }
+  G.rafId = requestAnimationFrame(cutLoop);
+}
+function showCutLine() {
+  const scene = SCENES[G.cutscene];
+  if (!scene) { advanceCutscene(); return; }
+  const line = scene[G.cutLine];
+  if (!line) { advanceCutscene(); return; }
+  // Name
+  if (line.who === 'muru') $('cut-name').textContent = 'MURU';
+  else {
+    const m = FAMILY.find(f => f.key === line.who);
+    $('cut-name').textContent = m ? m.name.toUpperCase() : line.who.toUpperCase();
+  }
+  // Typewriter
+  const bubble = $('cut-bubble');
+  bubble.textContent = '';
+  if (cutTyper) clearInterval(cutTyper);
+  let i = 0;
+  cutTyper = setInterval(() => {
+    bubble.textContent = line.text.slice(0, ++i);
+    if (i >= line.text.length) clearInterval(cutTyper);
+  }, 22);
+}
+function nextCutLine() {
+  // If still typing, complete instantly
+  if (cutTyper) {
+    clearInterval(cutTyper);
+    const scene = SCENES[G.cutscene];
+    const line = scene[G.cutLine];
+    $('cut-bubble').textContent = line.text;
+    cutTyper = null;
+    return;
+  }
+  G.cutLine++;
+  const scene = SCENES[G.cutscene];
+  if (G.cutLine >= scene.length) advanceCutscene();
+  else showCutLine();
+}
+function skipCutscene() {
+  if (cutTyper) clearInterval(cutTyper);
+  advanceCutscene();
+}
+function advanceCutscene() {
+  const tag = G.cutscene;
+  if (tag.startsWith('pre')) {
+    show('game');
+  } else if (tag.startsWith('win')) {
+    G.done.push(G.level);
+    saveSave();
+    if (G.level >= 8) { show('end'); return; }
+    if (G.level >= 2) {
+      // For now only levels 1-2 are built — go to menu after L2
+      show('menu');
+      return;
     }
+    G.level++;
+    G.cutscene = 'pre' + G.level;
+    show('cutscene');
+  } else if (tag.startsWith('fail')) {
+    if (G.lives <= 0) { show('fail'); }
+    else show('fail');   // shows fail card then either retry or menu
+  }
+}
 
-    // Closer rocks (parallax)
-    ctx.fillStyle = 'rgba(40,25,15,0.8)';
-    const o2 = -camX * 0.4 % 240;
-    for (let bx = o2; bx < W + 100; bx += 240) {
-      ctx.beginPath();
-      ctx.moveTo(bx, H*0.85);
-      ctx.quadraticCurveTo(bx + 60, H*0.7, bx + 140, H*0.85);
-      ctx.fill();
+// ── Game ─────────────────────────────────────────────────────────
+function enterGame() {
+  const cv = $('game-canvas');
+  if (G.level === 1) {
+    cv.width = L1.W; cv.height = L1.H;
+    $('hud-level').textContent = 'Level 1 · The Saree Chase';
+    G.active = Level1;
+  } else if (G.level === 2) {
+    cv.width = L2.W; cv.height = L2.H;
+    $('hud-level').textContent = 'Level 2 · The Painting Heist';
+    G.active = Level2;
+  }
+  G.active.init(api);
+  updateLivesHud();
+  updateProgressHud();
+  $('game-hint').textContent = G.level === 1
+    ? 'Tap / Space / ↑ to jump · Catch the auto for a 5-second blitz'
+    : 'Arrow keys / D-pad to move · Stay out of guard vision · Grab the painting';
+  gameLoop();
+}
+
+function gameLoop() {
+  G.active.update(api);
+  const cx = $('game-canvas').getContext('2d');
+  G.active.render(cx);
+  $('hud-status').textContent = G.active.status();
+  G.rafId = requestAnimationFrame(gameLoop);
+}
+
+// API for levels to call back
+const api = {
+  toast(msg) { $('hud-status').textContent = msg; },
+  lifeLost() {
+    G.lives = Math.max(0, G.lives - 1);
+    updateLivesHud();
+    saveSave();
+    flashHit();
+    if (G.lives <= 0) {
+      // Out of lives → fail current level
+      cancelAnimationFrame(G.rafId);
+      G.cutscene = 'fail' + G.level;
+      // Show fail screen with character quote
+      setTimeout(() => show('fail'), 600);
     }
   },
-
-  tile(ctx, c, x, y, T) {
-    if (c === '_') {
-      ctx.fillStyle = '#7a4014'; ctx.fillRect(x, y, T, T);
-      ctx.fillStyle = '#5a2a08'; ctx.fillRect(x, y + 6, T, 2);
-      ctx.fillStyle = '#5a2a08';
-      ctx.fillRect(x, y + T*0.5, T, 2);
-      ctx.fillRect(x + T*0.5, y + 8, 2, T*0.5);
-      ctx.fillStyle = '#5fa848'; ctx.fillRect(x, y, T, 6);
-      ctx.fillStyle = '#3a7a30'; ctx.fillRect(x, y + 4, T, 2);
-    } else if (c === 'X') {
-      ctx.fillStyle = '#5a3320'; ctx.fillRect(x, y, T, T);
-      ctx.strokeStyle = '#3a1f10'; ctx.lineWidth = 2;
-      ctx.strokeRect(x, y, T, T);
-      ctx.beginPath();
-      ctx.moveTo(x, y + T/2); ctx.lineTo(x + T, y + T/2);
-      ctx.moveTo(x + T/2, y); ctx.lineTo(x + T/2, y + T/2);
-      ctx.moveTo(x + T*0.25, y + T/2); ctx.lineTo(x + T*0.25, y + T);
-      ctx.moveTo(x + T*0.75, y + T/2); ctx.lineTo(x + T*0.75, y + T);
-      ctx.stroke();
-    } else if (c === '#') {
-      ctx.fillStyle = '#c08552'; ctx.fillRect(x, y, T, T);
-      ctx.strokeStyle = '#7a4a2a'; ctx.lineWidth = 1.5;
-      ctx.strokeRect(x + 1, y + 1, T - 2, T - 2);
-    }
+  win() {
+    cancelAnimationFrame(G.rafId);
+    G.cutscene = 'win' + G.level;
+    show('cutscene');
   },
-
-  coin(ctx, c, t) {
-    const wob = Math.sin(t/200) * 2;
-    ctx.save();
-    ctx.translate(c.x, c.y + wob);
-    const sq = Math.abs(Math.sin(t/300)) * 0.6 + 0.4;
-    ctx.scale(sq, 1);
-    ctx.fillStyle = '#ffd166';
-    ctx.beginPath(); ctx.arc(0, 0, 11, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#aa6a14';
-    ctx.beginPath(); ctx.arc(0, 0, 7, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffd166';
-    ctx.font = 'bold 11px Georgia';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('₹', 0, 1);
-    ctx.restore();
-  },
-
-  cup(ctx, c, t) {
-    const wob = Math.sin(t/250) * 2;
-    const x = c.x, y = c.y + wob;
-    // Halo
-    const grd = ctx.createRadialGradient(x, y, 4, x, y, 32);
-    grd.addColorStop(0, 'rgba(255,209,102,0.6)');
-    grd.addColorStop(1, 'rgba(255,209,102,0)');
-    ctx.fillStyle = grd;
-    ctx.fillRect(x - 32, y - 32, 64, 64);
-    // Cup body (chalice)
-    ctx.fillStyle = '#ffd166';
-    ctx.beginPath();
-    ctx.moveTo(x - 11, y - 14); ctx.lineTo(x + 11, y - 14);
-    ctx.lineTo(x + 8, y + 4); ctx.lineTo(x - 8, y + 4); ctx.closePath();
-    ctx.fill();
-    // Handles
-    ctx.strokeStyle = '#ffd166'; ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(x - 12, y - 6, 5, Math.PI*0.5, Math.PI*1.5); ctx.stroke();
-    ctx.beginPath(); ctx.arc(x + 12, y - 6, 5, Math.PI*1.5, Math.PI*0.5); ctx.stroke();
-    // Rim
-    ctx.fillStyle = '#aa6a14';
-    ctx.fillRect(x - 12, y - 16, 24, 2);
-    // Stem + base
-    ctx.fillStyle = '#ffd166';
-    ctx.fillRect(x - 3, y + 4, 6, 6);
-    ctx.fillRect(x - 9, y + 10, 18, 4);
-    // Sparkle
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(x - 6, y - 10, 2, 5);
-  },
-
-  spike(ctx, s) {
-    ctx.fillStyle = '#bbb';
-    for (let i = 0; i < s.w; i += 8) {
-      ctx.beginPath();
-      ctx.moveTo(s.x + i,     s.y + s.h);
-      ctx.lineTo(s.x + i + 4, s.y);
-      ctx.lineTo(s.x + i + 8, s.y + s.h);
-      ctx.closePath(); ctx.fill();
-    }
-    ctx.strokeStyle = '#666'; ctx.lineWidth = 1;
-    for (let i = 0; i < s.w; i += 8) {
-      ctx.beginPath();
-      ctx.moveTo(s.x + i + 4, s.y);
-      ctx.lineTo(s.x + i + 4, s.y + s.h);
-      ctx.stroke();
-    }
-  },
-
-  goal(ctx, g, cupTaken, t) {
-    const x = g.x, y = g.y, w = g.w, h = g.h;
-    // Frame
-    ctx.fillStyle = '#5a3a20';
-    ctx.fillRect(x - 4, y, w + 8, h);
-    // Door (locked = dark, unlocked = bright + glow)
-    if (cupTaken) {
-      ctx.fillStyle = 'rgba(255,209,102,0.45)';
-      ctx.fillRect(x - 8, y - 6, w + 16, h + 12);
-      ctx.fillStyle = '#ffd166';
-      ctx.fillRect(x, y + 8, w, h - 8);
-      // Handle
-      ctx.fillStyle = '#7a4014';
-      ctx.beginPath(); ctx.arc(x + w*0.78, y + h*0.55, 3, 0, Math.PI*2); ctx.fill();
-      // "EXIT" sign
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 9px Georgia';
-      ctx.textAlign = 'center';
-      ctx.fillText('EXIT', x + w/2, y + h*0.4);
-    } else {
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(x, y + 8, w, h - 8);
-      // Padlock
-      ctx.fillStyle = '#999';
-      ctx.fillRect(x + w*0.3, y + h*0.45, w*0.4, w*0.4);
-      ctx.lineWidth = 3; ctx.strokeStyle = '#999';
-      ctx.beginPath();
-      ctx.arc(x + w*0.5, y + h*0.45, w*0.22, Math.PI, 0);
-      ctx.stroke();
-      ctx.fillStyle = '#000';
-      ctx.fillRect(x + w*0.46, y + h*0.55, w*0.08, w*0.15);
-    }
-    // Top arch
-    ctx.fillStyle = '#7a4a2a';
-    ctx.fillRect(x - 4, y, w + 8, 6);
-  },
-
-  enemy(ctx, e, t) {
-    if (e.kind === 'fast') {
-      // Vulture-like fast
-      const bob = Math.sin(t/100) * 1.5;
-      ctx.fillStyle = '#3a3a3a';
-      ctx.fillRect(e.x + 2, e.y + 8 + bob, e.w - 4, e.h - 12);
-      const hx = e.vx > 0 ? e.w - 6 : 6;
-      ctx.fillStyle = '#5a5a5a';
-      ctx.beginPath(); ctx.arc(e.x + hx, e.y + 8 + bob, 7, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#ffd166';
-      const beakX = e.vx > 0 ? e.x + e.w + 2 : e.x - 8;
-      ctx.beginPath();
-      ctx.moveTo(beakX, e.y + 6 + bob);
-      ctx.lineTo(beakX + (e.vx > 0 ? 6 : -6), e.y + 8 + bob);
-      ctx.lineTo(beakX, e.y + 10 + bob);
-      ctx.closePath(); ctx.fill();
-      ctx.fillStyle = '#c33';
-      ctx.fillRect(e.x + (e.vx > 0 ? e.w - 6 : 4), e.y + 6 + bob, 2, 2);
-    } else {
-      // Bandit
-      const bob = Math.sin(t/150) * 1;
-      ctx.fillStyle = '#3a1f10';
-      ctx.fillRect(e.x + 4, e.y + 14 + bob, e.w - 8, e.h - 18);
-      ctx.fillStyle = '#a8744f';
-      ctx.fillRect(e.x + 6, e.y + 6 + bob, e.w - 12, 10);
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(e.x + 5, e.y + 2 + bob, e.w - 10, 6);
-      ctx.beginPath(); ctx.arc(e.x + e.w/2, e.y + 4 + bob, 8, 0, Math.PI*2); ctx.fill();
-      ctx.fillStyle = '#c33';
-      const eo = e.vx > 0 ? 4 : -4;
-      ctx.fillRect(e.x + e.w/2 - 4 + eo, e.y + 10 + bob, 2, 2);
-      ctx.fillRect(e.x + e.w/2 + eo,     e.y + 10 + bob, 2, 2);
-      ctx.fillStyle = '#ddd';
-      const sx = e.vx > 0 ? e.x + e.w : e.x - 4;
-      ctx.fillRect(sx, e.y + 16 + bob, 4, 12);
-      ctx.fillStyle = '#7a4a14';
-      ctx.fillRect(sx - 1, e.y + 28 + bob, 6, 3);
-      const phase = Math.sin(t/120) * 2;
-      ctx.fillStyle = '#5a3a18';
-      ctx.fillRect(e.x + 6, e.y + e.h - 4 + bob, 5, 4 + phase);
-      ctx.fillRect(e.x + e.w - 11, e.y + e.h - 4 + bob, 5, 4 - phase);
-    }
-  },
-
-  player(ctx, p, t) {
-    const flicker = (p.hurt > 0 && Math.floor(t/80) % 2 === 0);
-    if (flicker) ctx.globalAlpha = 0.45;
-
-    const cx = p.x, cy = p.y;
-    const phase = p.walkPhase;
-    const legSwing = Math.sin(phase) * 4;
-
-    // Legs (saffron pants)
-    ctx.fillStyle = '#d97a14';
-    ctx.fillRect(cx + 4, cy + 30, 7, 14 + legSwing);
-    ctx.fillRect(cx + 15, cy + 30, 7, 14 - legSwing);
-    // Shoes
-    ctx.fillStyle = '#3a1f10';
-    ctx.fillRect(cx + 3, cy + 42 + legSwing, 9, 3);
-    ctx.fillRect(cx + 14, cy + 42 - legSwing, 9, 3);
-
-    // Body — kurta
-    ctx.fillStyle = '#2a6a3a';
-    ctx.fillRect(cx + 2, cy + 16, 22, 16);
-    ctx.fillStyle = '#ffd166';
-    ctx.fillRect(cx + 2, cy + 28, 22, 2);
-    ctx.fillStyle = '#1a4a2a';
-    ctx.fillRect(cx + 13, cy + 16, 1, 12);
-
-    // Arms
-    ctx.fillStyle = '#2a6a3a';
-    const armSwing = Math.sin(phase + Math.PI) * 3;
-    ctx.fillRect(cx - 1, cy + 18, 4, 11 + armSwing);
-    ctx.fillRect(cx + 23, cy + 18, 4, 11 - armSwing);
-    // Hands
-    ctx.fillStyle = '#d49a73';
-    ctx.fillRect(cx - 1, cy + 28 + armSwing, 4, 3);
-    ctx.fillRect(cx + 23, cy + 28 - armSwing, 4, 3);
-
-    // Face
-    ctx.fillStyle = '#d49a73';
-    ctx.fillRect(cx + 4, cy + 5, 18, 13);
-    // Beard
-    ctx.fillStyle = '#1a0a05';
-    ctx.fillRect(cx + 5, cy + 14, 16, 4);
-    ctx.fillRect(cx + 7, cy + 17, 12, 1);
-    // Eyes
-    ctx.fillStyle = '#000';
-    if (p.facing > 0) {
-      ctx.fillRect(cx + 13, cy + 9, 2, 2);
-      ctx.fillRect(cx + 18, cy + 9, 2, 2);
-    } else {
-      ctx.fillRect(cx + 7,  cy + 9, 2, 2);
-      ctx.fillRect(cx + 12, cy + 9, 2, 2);
-    }
-
-    // Saffron turban (signature)
-    ctx.fillStyle = '#ff8c00';
-    ctx.beginPath();
-    ctx.ellipse(cx + 13, cy + 3, 13, 5, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillRect(cx + 1, cy + 2, 24, 4);
-    ctx.fillStyle = '#c46a00';
-    ctx.beginPath();
-    ctx.ellipse(cx + 13, cy + 3, 13, 1.5, 0, 0, Math.PI*2); ctx.fill();
-    ctx.fillStyle = '#ffaa44';
-    ctx.fillRect(cx + 4, cy + 1, 10, 1.5);
-    ctx.fillStyle = '#c33';
-    ctx.beginPath(); ctx.arc(cx + 13, cy + 2, 2, 0, Math.PI*2); ctx.fill();
-
-    ctx.globalAlpha = 1;
+  lose() {
+    G.lives = Math.max(0, G.lives - 1);
+    saveSave();
+    cancelAnimationFrame(G.rafId);
+    G.cutscene = 'fail' + G.level;
+    setTimeout(() => show('fail'), 400);
   },
 };
 
-// ── Game setup ─────────────────────────────────────────────────────
-const game = new Platformer({
-  canvas: $('canvas'),
-  level: LEVEL,
-  theme,
-  requireCup: true,
-  onScore: s => $('hud-score').textContent = s,
-  onLives: l => $('hud-lives').innerHTML = renderHearts(l),
-  onCup:   taken => {
-    const el = $('hud-cup');
-    if (taken) { el.textContent = '★ HAVE IT'; el.style.color = '#ffd166'; }
-    else       { el.textContent = '—';         el.style.color = '#888'; }
-  },
-  onWin:   s => showEnd('Vetri!', 'You found the cup and the door.', s, '#4ecca3'),
-  onLose:  s => showEnd('Game Over', 'Try again!', s, '#ff6584'),
-});
-game.start();
-
-function renderHearts(l) {
-  const filled = '♥'.repeat(Math.max(0, l));
-  const empty  = '♡'.repeat(Math.max(0, 3 - l));
-  return `<span style="color:#ff6584">${filled}</span><span style="color:#444">${empty}</span>`;
+function updateLivesHud() {
+  $('hud-lives').textContent = '❤️'.repeat(G.lives) + '🖤'.repeat(Math.max(0, 3 - G.lives));
 }
-$('hud-lives').innerHTML = renderHearts(3);
+function updateProgressHud() {
+  $('hud-progress').style.width = (G.done.length * 12.5) + '%';
+}
 
-document.querySelectorAll('.touch-btn[data-touch]').forEach(b => {
-  const k = b.dataset.touch;
-  const set = v => { game.touch[k] = v; };
+function flashHit() {
+  const wrap = $('canvas-wrap');
+  wrap.classList.remove('hit'); void wrap.offsetWidth;
+  wrap.classList.add('hit');
+  setTimeout(() => wrap.classList.remove('hit'), 420);
+}
+
+// ── Fail screen ──────────────────────────────────────────────────
+function enterFail() {
+  const scene = SCENES['fail' + G.level];
+  if (scene && scene[0]) $('fail-quote').textContent = scene[0].text;
+  $('fail-title').textContent = G.lives <= 0 ? 'Game Over!' : 'Aiyyo! Try again!';
+}
+
+// ── End screen ───────────────────────────────────────────────────
+function enterEnd() {
+  const row = $('kalyanam-row');
+  row.innerHTML = '';
+  FAMILY.slice(0, 8).forEach(m => {
+    const cv = document.createElement('canvas');
+    cv.width = 80; cv.height = 110;
+    row.appendChild(cv);
+    let f = Math.random() * 100;
+    function tick() {
+      const cx = cv.getContext('2d');
+      cx.clearRect(0,0,cv.width, cv.height);
+      m.draw(cx, cv.width/2, cv.height - 4, f);
+      f++;
+      requestAnimationFrame(tick);
+    }
+    tick();
+  });
+  // Reset save so they can play again
+}
+
+// ── Wire events ──────────────────────────────────────────────────
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-action]');
+  if (!a) return;
+  const act = a.dataset.action;
+  if (act === 'start')  startAdventure();
+  if (act === 'family') show('family');
+  if (act === 'menu')   show('menu');
+  if (act === 'reset')  { G.done = []; G.lives = 3; G.level = 0; clearSave(); show('menu'); }
+  if (act === 'retry')  retryLevel();
+});
+
+function startAdventure() {
+  // Resume from where we left off
+  G.lives = G.lives ?? 3;
+  if (G.lives <= 0) G.lives = 3;
+  G.level = G.done.length + 1;
+  if (G.level > 8) { show('end'); return; }
+  if (G.level > 2) { alert('Levels 3+ coming soon — only L1 and L2 are built!'); return; }
+  G.cutscene = 'pre' + G.level;
+  show('cutscene');
+}
+
+function retryLevel() {
+  if (G.lives <= 0) { G.lives = 3; saveSave(); }
+  G.cutscene = 'pre' + G.level;
+  show('cutscene');
+}
+
+$('cut-next').addEventListener('click', nextCutLine);
+$('cut-skip').addEventListener('click', skipCutscene);
+
+// Keyboard
+window.addEventListener('keydown', e => {
+  if (G.screen === 'cutscene') {
+    if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); nextCutLine(); }
+    if (e.code === 'Escape') skipCutscene();
+    return;
+  }
+  if (G.screen !== 'game') return;
+  if (G.level === 1) {
+    if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+      e.preventDefault(); Level1.jump();
+    }
+  } else if (G.level === 2) {
+    const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+                  ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right' };
+    if (map[e.code]) { e.preventDefault(); Level2.setDir(map[e.code], true); }
+  }
+});
+window.addEventListener('keyup', e => {
+  if (G.screen !== 'game' || G.level !== 2) return;
+  const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+                ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right' };
+  if (map[e.code]) Level2.setDir(map[e.code], false);
+});
+
+// Touch / click on game canvas (Level 1 jump)
+$('game-canvas').addEventListener('pointerdown', () => {
+  if (G.screen === 'game' && G.level === 1) Level1.jump();
+});
+
+// Touch pad (Level 2)
+document.querySelectorAll('.dpad-btn').forEach(b => {
+  const dir = b.dataset.dir;
+  const set = on => { if (G.level === 2) Level2.setDir(dir, on); };
   b.addEventListener('touchstart', e => { e.preventDefault(); set(true); }, { passive: false });
   b.addEventListener('touchend',   e => { e.preventDefault(); set(false); }, { passive: false });
   b.addEventListener('mousedown',  () => set(true));
@@ -334,21 +349,5 @@ document.querySelectorAll('.touch-btn[data-touch]').forEach(b => {
   b.addEventListener('mouseleave', () => set(false));
 });
 
-function showEnd(title, msg, score, color) {
-  $('end-title').textContent = title;
-  $('end-msg').textContent   = msg;
-  $('end-score').textContent = score;
-  const ov = $('overlay'); ov.classList.remove('hidden'); ov.style.color = color;
-  const key = 'mangaatha.highscore';
-  const high = parseInt(localStorage.getItem(key) || '0', 10);
-  if (score > high) {
-    localStorage.setItem(key, score);
-    $('end-msg').textContent += ' New high score!';
-  }
-}
-
-$('play-again').addEventListener('click', () => {
-  $('overlay').classList.add('hidden');
-  game.reset();
-  $('hud-lives').innerHTML = renderHearts(3);
-});
+// Boot
+show('menu');
