@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Blackjack — GameHub</title>
+  <link rel="stylesheet" href="/shared/theme.css">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <a href="/" class="back-to-hub">←&nbsp;Hub</a>
+  <button id="how-btn" class="how-btn">?&nbsp;How to play</button>
+
+  <!-- ── Sit-down screen ── -->
+  <div id="sit-screen">
+    <div class="sit-card">
+      <h1 class="bj-logo">BLACK<span>JACK</span></h1>
+      <p class="bj-sub">1–4 players vs the dealer</p>
+
+      <div class="profile-pill">
+        <div class="profile-pill-name" id="sit-name">—</div>
+        <div class="profile-pill-chips"><span id="sit-chips">0</span> chips</div>
+      </div>
+
+      <button id="sit-btn">Take a seat</button>
+      <p id="sit-msg" class="sit-msg"></p>
+
+      <div class="sit-room">
+        <span class="sit-room-label">Table:</span>
+        <span class="sit-room-code" id="sit-room-code">PUBLIC</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Game screen ── -->
+  <div id="game-screen" class="hidden">
+    <div class="phase-bar">
+      <span class="phase-label" id="phase-label">Waiting…</span>
+      <span class="phase-timer" id="phase-timer"></span>
+      <span class="phase-info" id="phase-info"></span>
+    </div>
+
+    <!-- Dealer -->
+    <div class="dealer-area">
+      <div class="dealer-name">DEALER <span id="dealer-total"></span></div>
+      <div class="hand" id="dealer-hand"></div>
+    </div>
+
+    <!-- Player seats -->
+    <div class="seats" id="seats"></div>
+
+    <!-- Action panel -->
+    <div class="action-panel" id="action-panel">
+      <!-- Bet UI -->
+      <div id="bet-ui" class="bet-ui hidden">
+        <div class="bet-presets">
+          <button data-amt="50">50</button>
+          <button data-amt="100">100</button>
+          <button data-amt="250">250</button>
+          <button data-amt="500">500</button>
+          <button data-amt="1000">1000</button>
+          <button data-amt="all" class="all-in">ALL IN</button>
+        </div>
+        <div class="bet-custom">
+          <input id="bet-custom-input" type="number" min="50" placeholder="Custom amount">
+          <button id="bet-place">Place Bet</button>
+        </div>
+        <div class="bet-summary" id="bet-summary"></div>
+      </div>
+
+      <!-- Insurance UI -->
+      <div id="ins-ui" class="ins-ui hidden">
+        <p class="ins-q">Dealer is showing an Ace. Insurance?</p>
+        <div class="ins-row">
+          <button id="ins-yes">Take Insurance</button>
+          <button id="ins-no" class="ghost">No</button>
+        </div>
+        <p class="ins-note">Costs half your bet. Pays 2:1 if dealer has Blackjack.</p>
+      </div>
+
+      <!-- Action buttons -->
+      <div id="actions-ui" class="actions-ui hidden">
+        <button class="act-btn" data-act="hit"        title="Take another card.">Hit</button>
+        <button class="act-btn" data-act="stand"      title="End your turn with current cards.">Stand</button>
+        <button class="act-btn" data-act="double"     title="Double your bet, take exactly one more card, then stand.">Double</button>
+        <button class="act-btn" data-act="split"      title="If your two cards match, split into two hands.">Split</button>
+        <button class="act-btn" data-act="surrender"  title="Forfeit half your bet and exit the hand.">Surrender</button>
+      </div>
+
+      <!-- Idle / waiting -->
+      <p id="idle-msg" class="idle-msg"></p>
+    </div>
+
+    <div class="event-log" id="event-log"></div>
+  </div>
+
+  <!-- ── How-to-play modal ── -->
+  <div id="how-modal" class="overlay hidden">
+    <div class="how-card">
+      <button class="how-close" id="how-close">×</button>
+      <h2>How to play Blackjack</h2>
+
+      <h3>Goal</h3>
+      <p>Beat the dealer's hand without going over 21.</p>
+
+      <h3>Card values</h3>
+      <ul>
+        <li><b>2–10</b>: face value</li>
+        <li><b>J / Q / K</b>: 10</li>
+        <li><b>A</b>: 1 or 11 — whichever helps your hand most</li>
+      </ul>
+
+      <h3>The flow</h3>
+      <ol>
+        <li>You're dealt 2 cards face-up. Dealer shows 1 card; the second is hidden.</li>
+        <li>You decide how to play your hand (actions below).</li>
+        <li>When everyone's done, dealer flips the hidden card and draws until total is 17 or higher.</li>
+        <li>If your total beats the dealer's without going over 21 — you win.</li>
+      </ol>
+
+      <h3>Your actions</h3>
+      <ul class="how-actions">
+        <li><b>Hit</b> — Take another card. If you go over 21, you bust and lose.</li>
+        <li><b>Stand</b> — Stop drawing. Lock in your total.</li>
+        <li><b>Double</b> — Double your bet, then take exactly one more card and stand. Big risk, big payoff. Only on your first 2 cards.</li>
+        <li><b>Split</b> — If your first two cards have the same rank (e.g. two 8s, or a 10 and a Jack), split them into two separate hands, each with its own bet. You play each hand in turn.</li>
+        <li><b>Surrender</b> — Give up the hand. You lose half your bet but keep the other half. Only on your first 2 cards.</li>
+        <li><b>Insurance</b> — Offered only when the dealer's up-card is an Ace. Costs half your bet. Pays 2:1 if the dealer has Blackjack — otherwise you lose it.</li>
+      </ul>
+
+      <h3>Payouts</h3>
+      <ul>
+        <li><b>Win</b>: 1× your bet</li>
+        <li><b>Blackjack</b> (Ace + 10/face on first 2 cards): 1.5× your bet</li>
+        <li><b>Push</b> (tie): bet returned</li>
+        <li><b>Bust / Lose</b>: bet lost</li>
+      </ul>
+
+      <h3>House rules at this table</h3>
+      <ul>
+        <li>6-deck shoe</li>
+        <li>Dealer stands on all 17 (including soft 17)</li>
+        <li>Blackjack pays 3:2</li>
+        <li>You can split up to 4 hands</li>
+        <li>Split aces get one card only and don't count as Blackjack</li>
+        <li>Each round opens for 20 seconds — bet during that window or sit out</li>
+        <li>Minimum bet: 50 chips. If you drop below 50, you're out</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ── Broke screen ── -->
+  <div id="broke-screen" class="overlay hidden">
+    <div class="broke-card">
+      <div class="broke-emoji">💸</div>
+      <h2>You're out of chips</h2>
+      <p>You need at least <b>50 chips</b> to keep playing.</p>
+      <div class="broke-row">
+        <button id="refill-btn">Refill 1000 chips</button>
+        <a class="ghost-link" href="/">Back to Hub</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="/shared/profile.js"></script>
+  <script src="blackjack.js"></script>
+</body>
+</html>

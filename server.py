@@ -15,6 +15,8 @@ from websockets.asyncio.server import serve
 from websockets.datastructures import Headers
 from websockets.http11 import Response
 
+from blackjack import handle_blackjack
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -313,7 +315,8 @@ async def handler(ws):
 
     if p in ("/ws/word-race", "/word-race") or p == "":
         await handle_word_race(ws)
-    # Future: elif p == "/ws/blackjack": await handle_blackjack(ws)
+    elif p in ("/ws/blackjack", "/blackjack"):
+        await handle_blackjack(ws)
     else:
         try: await ws.close(code=1003, reason="unknown game")
         except Exception: pass
