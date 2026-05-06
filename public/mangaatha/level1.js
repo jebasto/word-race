@@ -7,20 +7,24 @@ const L1_TUNE = {
   W: 880, H: 320,
   GROUND: 260,
   MURU_X: 160,
+  MURU_SCALE: 0.62,         // Muru is drawn smaller relative to obstacles
   // Jump physics
   JUMP_VY: -10.5,           // initial impulse
   GRAVITY_NORMAL: 0.55,     // gravity when not holding jump
   GRAVITY_HOLD:   0.28,     // gravity while jump held (during ascent)
   JUMP_HOLD_FRAMES: 16,     // up to N frames of reduced gravity
   // Speed
-  SPEED_MIN: 2.4,
-  SPEED_MAX: 4.4,
-  SPEED_RAMP_DIST: 6500,    // distance to reach max speed
+  SPEED_MIN: 3.0,
+  SPEED_MAX: 5.6,
+  SPEED_RAMP_DIST: 5000,
   // Spacing
-  GAP_MIN: 280,
-  GAP_MAX: 540,
+  GAP_MIN: 290,
+  GAP_MAX: 560,
   // Obstacle queue
   TOTAL_OBSTACLES: 45,
+  // Power-up
+  RIDE_FRAMES: 300,
+  RIDE_GRACE: 60,           // invuln frames after dismount
 };
 
 const L1 = {
@@ -141,43 +145,123 @@ const OB_TYPES = {
     }
   },
   peel: {
-    w: 30, h: 14,
+    w: 36, h: 14,
     draw(cx, x, by, t) {
-      cx.save(); cx.translate(x, by);
-      ol(cx, () => {
-        cx.beginPath();
-        cx.moveTo(0, -2);
-        cx.bezierCurveTo(8, -14, 22, -14, 30, -2);
-        cx.bezierCurveTo(28, 0, 22, -8, 16, -8);
-        cx.bezierCurveTo(8, -8, 4, 0, 0, -2);
-        cx.closePath();
-      }, '#FFD700');
-      // Highlight
-      cx.strokeStyle = 'rgba(255,255,180,0.7)'; cx.lineWidth = 1;
-      cx.beginPath(); cx.moveTo(8, -8); cx.bezierCurveTo(14, -10, 20, -10, 24, -6); cx.stroke();
+      // A real banana peel: stem in the middle, three flaps splayed flat on the ground.
+      cx.save();
+      // Faint shadow under it (so it reads as on-the-ground)
+      cx.fillStyle = 'rgba(0,0,0,0.18)';
+      cx.beginPath(); cx.ellipse(x + 18, by - 1, 18, 4, 0, 0, Math.PI * 2); cx.fill();
+
+      cx.translate(x + 18, by - 2);
+      cx.fillStyle = '#FFD700';
+      cx.strokeStyle = BL; cx.lineWidth = 1.5; cx.lineJoin = 'round';
+      // Left flap
+      cx.beginPath();
+      cx.moveTo(0, 0);
+      cx.bezierCurveTo(-6, -8, -16, -6, -18, 0);
+      cx.bezierCurveTo(-14, 4, -6, 3, 0, 0);
+      cx.closePath(); cx.fill(); cx.stroke();
+      // Right flap
+      cx.beginPath();
+      cx.moveTo(0, 0);
+      cx.bezierCurveTo(8, -8, 16, -2, 14, 4);
+      cx.bezierCurveTo(8, 5, 2, 3, 0, 0);
+      cx.closePath(); cx.fill(); cx.stroke();
+      // Front flap
+      cx.beginPath();
+      cx.moveTo(0, 0);
+      cx.bezierCurveTo(-4, 4, 4, 5, 7, 1);
+      cx.bezierCurveTo(5, -2, 0, -2, 0, 0);
+      cx.closePath(); cx.fill(); cx.stroke();
+      // Stem
+      cx.fillStyle = '#7A4014';
+      cx.beginPath(); cx.ellipse(0, -2, 2.5, 2, 0, 0, Math.PI * 2); cx.fill();
+      cx.strokeStyle = BL; cx.lineWidth = 1; cx.stroke();
+      // Inner texture lines
+      cx.strokeStyle = 'rgba(180,140,30,0.55)'; cx.lineWidth = 0.8;
+      cx.beginPath(); cx.moveTo(-12, -3); cx.lineTo(-3, 0);
+      cx.moveTo(10, -2); cx.lineTo(2, 0);
+      cx.moveTo(0, 1); cx.lineTo(3, 4);
+      cx.stroke();
       cx.restore();
     }
   },
   puddle: {
-    w: 60, h: 10,
+    w: 80, h: 10,
     draw(cx, x, by, t) {
-      cx.save(); cx.translate(x, by);
-      ol(cx, () => { cx.beginPath(); cx.ellipse(30, -3, 30, 6, 0, 0, Math.PI*2); }, '#5DADE2');
-      cx.strokeStyle = 'rgba(255,255,255,0.5)'; cx.lineWidth = 1;
-      cx.beginPath(); cx.moveTo(15, -4); cx.lineTo(25, -4); cx.moveTo(35, -2); cx.lineTo(42, -2); cx.stroke();
+      // Irregular blob of water sitting flat on the road.
+      cx.save();
+      cx.translate(x, by);
+      // Slight darken on the road around it (wet ring)
+      cx.fillStyle = 'rgba(0,0,0,0.18)';
+      cx.beginPath();
+      cx.moveTo(-2, 0);
+      cx.bezierCurveTo(8, -6, 25, -10, 40, -8);
+      cx.bezierCurveTo(60, -10, 76, -6, 82, 0);
+      cx.bezierCurveTo(70, 6, 50, 7, 30, 6);
+      cx.bezierCurveTo(15, 7, 0, 5, -2, 0);
+      cx.closePath(); cx.fill();
+      // Water blob — irregular outline
+      ol(cx, () => {
+        cx.beginPath();
+        cx.moveTo(2, -1);
+        cx.bezierCurveTo(10, -8, 22, -10, 32, -8);
+        cx.bezierCurveTo(48, -10, 64, -7, 76, -2);
+        cx.bezierCurveTo(72, 4, 56, 5, 40, 4);
+        cx.bezierCurveTo(24, 5, 8, 4, 2, -1);
+        cx.closePath();
+      }, '#3A93C8', 1.5);
+      // Highlight streaks
+      cx.strokeStyle = 'rgba(255,255,255,0.75)';
+      cx.lineWidth = 1.5; cx.lineCap = 'round';
+      cx.beginPath(); cx.moveTo(14, -5); cx.bezierCurveTo(22, -6, 30, -5, 36, -3); cx.stroke();
+      cx.beginPath(); cx.moveTo(50, -3); cx.bezierCurveTo(58, -4, 64, -3, 68, -1); cx.stroke();
+      // Ripple — animated
+      cx.strokeStyle = 'rgba(255,255,255,0.35)'; cx.lineWidth = 1;
+      const rip = (Math.sin(t * 0.06) + 1) * 0.5;
+      cx.beginPath();
+      cx.ellipse(40, -2, 18 + rip * 8, 4 + rip * 1.5, 0, 0, Math.PI * 2);
+      cx.stroke();
       cx.restore();
     }
   },
   pothole: {
-    w: 50, h: 16,
+    w: 56, h: 16,
     draw(cx, x, by, t) {
-      cx.save(); cx.translate(x, by);
-      ol(cx, () => { cx.beginPath(); cx.ellipse(25, -3, 25, 6, 0, 0, Math.PI*2); }, '#1a1a1a');
-      cx.strokeStyle = '#3a2810'; cx.lineWidth = 1.5;
+      cx.save();
+      cx.translate(x, by);
+      // Cracked ring around the hole
+      cx.strokeStyle = 'rgba(40,25,10,0.65)';
+      cx.lineWidth = 1.2;
       cx.beginPath();
-      cx.moveTo(-2, -2); cx.lineTo(8, -1);
-      cx.moveTo(50, -2); cx.lineTo(58, -1);
+      cx.moveTo(-4, 1); cx.lineTo(4, -3); cx.lineTo(8, 1);
+      cx.moveTo(54, 0); cx.lineTo(60, -2); cx.lineTo(62, 1);
+      cx.moveTo(20, 4); cx.lineTo(18, 7);
+      cx.moveTo(38, 4); cx.lineTo(40, 7);
       cx.stroke();
+      // Outer hole (irregular dark shape)
+      ol(cx, () => {
+        cx.beginPath();
+        cx.moveTo(2, 0);
+        cx.bezierCurveTo(10, -10, 22, -14, 32, -12);
+        cx.bezierCurveTo(46, -14, 54, -10, 56, -4);
+        cx.bezierCurveTo(54, 2, 40, 4, 26, 3);
+        cx.bezierCurveTo(14, 4, 4, 3, 2, 0);
+        cx.closePath();
+      }, '#1c0e04', 1.5);
+      // Inner blackness
+      cx.fillStyle = '#000';
+      cx.beginPath();
+      cx.moveTo(8, -2);
+      cx.bezierCurveTo(14, -10, 26, -12, 36, -10);
+      cx.bezierCurveTo(44, -10, 50, -7, 48, -3);
+      cx.bezierCurveTo(36, -1, 22, -2, 8, -2);
+      cx.closePath();
+      cx.fill();
+      // Loose pebble
+      cx.fillStyle = '#7A5A3A';
+      cx.beginPath(); cx.arc(48, 1, 1.5, 0, Math.PI * 2); cx.fill();
       cx.restore();
     }
   },
@@ -248,83 +332,284 @@ const OB_TYPES = {
 
 // Power-up: moving auto-rickshaw to "catch"
 const POWERUP_AUTO = {
-  w: 80, h: 60,
-  draw(cx, x, by, t) {
-    cx.save(); cx.translate(x, by);
-    // Speed lines around it
-    cx.strokeStyle = 'rgba(244,196,48,0.5)'; cx.lineWidth = 2;
-    for (let i = 0; i < 3; i++) {
+  w: 90, h: 64,
+  draw(cx, x, by, t, riding = false) {
+    const pulse = 1 + Math.sin(t * 0.18) * 0.06;
+    cx.save();
+    cx.translate(x, by);
+
+    // Strong pulsing halo (only when not actively being ridden)
+    if (!riding) {
+      const r1 = 30, r2 = 80 * pulse;
+      const grd = cx.createRadialGradient(40, -30, r1, 40, -30, r2);
+      grd.addColorStop(0,    'rgba(255,220,80,0.55)');
+      grd.addColorStop(0.55, 'rgba(255,180,40,0.30)');
+      grd.addColorStop(1,    'rgba(255,180,40,0)');
+      cx.fillStyle = grd;
+      cx.beginPath(); cx.arc(40, -30, r2, 0, Math.PI * 2); cx.fill();
+
+      // Outer dashed ring (rotating)
+      cx.save(); cx.translate(40, -30); cx.rotate(t * 0.05);
+      cx.strokeStyle = 'rgba(255,210,80,0.85)'; cx.lineWidth = 2.5;
+      cx.setLineDash([6, 6]);
+      cx.beginPath(); cx.arc(0, 0, 50, 0, Math.PI * 2); cx.stroke();
+      cx.setLineDash([]);
+      cx.restore();
+    }
+
+    // Speed-line streaks (left side)
+    cx.strokeStyle = 'rgba(255,210,80,0.7)'; cx.lineWidth = 2.5; cx.lineCap = 'round';
+    for (let i = 0; i < 4; i++) {
+      const yy = -52 + i * 14;
       cx.beginPath();
-      const yy = -30 - i * 10;
-      cx.moveTo(-10 - i * 6, yy); cx.lineTo(0 - i * 4, yy);
+      cx.moveTo(-18 - i * 4, yy);
+      cx.lineTo(-2 - i * 2, yy);
       cx.stroke();
     }
-    // Body
-    ol(cx, () => { cx.beginPath(); rR(cx, 4, -54, 70, 36, 8); }, '#F4C430');
-    cx.fillStyle = '#117A65'; cx.fillRect(4, -36, 70, 5);
+
+    // Body — yellow
+    ol(cx, () => { cx.beginPath(); rR(cx, 6, -56, 78, 40, 10); }, '#F4C430');
+    // Green livery stripe
+    cx.fillStyle = '#117A65';
+    cx.fillRect(6, -38, 78, 6);
+    cx.fillStyle = 'rgba(0,0,0,0.25)';
+    cx.fillRect(6, -32, 78, 2);
+
     // Canopy
     ol(cx, () => {
-      cx.beginPath(); cx.moveTo(10, -54); cx.lineTo(70, -54);
-      cx.lineTo(66, -64); cx.lineTo(14, -64); cx.closePath();
+      cx.beginPath();
+      cx.moveTo(12, -56); cx.lineTo(80, -56);
+      cx.lineTo(74, -68); cx.lineTo(18, -68); cx.closePath();
     }, '#2C2C2C');
-    // Driver visible
-    ol(cx, () => { cx.beginPath(); cx.arc(20, -42, 5, 0, Math.PI*2); }, SK, 1);
-    // Front
-    ol(cx, () => { cx.beginPath(); rR(cx, 0, -36, 10, 20, 3); }, '#F4C430');
-    cx.fillStyle = '#fff'; cx.fillRect(2, -32, 6, 4);
-    // Wheels (spinning effect)
-    [16, 60].forEach(wx => {
-      ol(cx, () => { cx.beginPath(); cx.arc(wx, -8, 10, 0, Math.PI*2); }, '#1a1a1a');
+    // Canopy trim
+    cx.fillStyle = '#F4C430';
+    cx.fillRect(14, -58, 64, 2);
+
+    // Front cab (driver area)
+    ol(cx, () => { cx.beginPath(); rR(cx, 0, -38, 14, 22, 4); }, '#F4C430');
+    cx.fillStyle = '#5DADE2'; cx.fillRect(2, -34, 10, 8);   // windshield
+
+    // Driver silhouette
+    cx.fillStyle = SK;
+    cx.beginPath(); cx.arc(22, -44, 5, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = BL;
+    cx.fillRect(20, -42, 4, 1);    // mustache
+
+    // Plate
+    cx.fillStyle = '#fff';
+    cx.fillRect(56, -22, 24, 8);
+    cx.strokeStyle = BL; cx.lineWidth = 1;
+    cx.strokeRect(56, -22, 24, 8);
+    cx.fillStyle = BL;
+    cx.font = 'bold 7px sans-serif'; cx.textAlign = 'center';
+    cx.fillText('TN-09', 68, -16);
+    cx.textAlign = 'left';
+
+    // Wheels (spinning)
+    [18, 70].forEach(wx => {
+      ol(cx, () => { cx.beginPath(); cx.arc(wx, -8, 10, 0, Math.PI * 2); }, '#1a1a1a');
       cx.strokeStyle = '#888'; cx.lineWidth = 1.5;
       for (let a = 0; a < 4; a++) {
-        cx.save(); cx.translate(wx,-8); cx.rotate(a*Math.PI/4 + t*0.3);
-        cx.beginPath(); cx.moveTo(-9,0); cx.lineTo(9,0); cx.stroke();
+        cx.save();
+        cx.translate(wx, -8);
+        cx.rotate(a * Math.PI / 4 + t * 0.4);
+        cx.beginPath(); cx.moveTo(-9, 0); cx.lineTo(9, 0); cx.stroke();
         cx.restore();
       }
+      cx.fillStyle = '#888';
+      cx.beginPath(); cx.arc(wx, -8, 3, 0, Math.PI * 2); cx.fill();
     });
-    // "RIDE ME!" sign
-    cx.fillStyle = BL; cx.fillRect(20, -76, 50, 14);
-    cx.fillStyle = '#F4C430'; cx.font = 'bold 9px sans-serif'; cx.textAlign = 'center';
-    cx.fillText('RIDE ME!', 45, -66); cx.textAlign = 'left';
+
+    // "JUMP!" floating sign — only when it's a free-floating power-up
+    if (!riding) {
+      const bobUp = Math.sin(t * 0.18) * 3;
+      // Speech bubble
+      ol(cx, () => {
+        cx.beginPath();
+        rR(cx, 18, -94 + bobUp, 56, 22, 6);
+      }, '#F4C430', 2.5);
+      cx.fillStyle = BL; cx.font = 'bold 11px sans-serif'; cx.textAlign = 'center';
+      cx.fillText('⚡ JUMP IN!', 46, -79 + bobUp);
+      cx.textAlign = 'left';
+      // Bubble tail
+      cx.fillStyle = '#F4C430';
+      cx.beginPath();
+      cx.moveTo(40, -72 + bobUp); cx.lineTo(45, -68 + bobUp); cx.lineTo(50, -72 + bobUp);
+      cx.closePath(); cx.fill();
+      cx.strokeStyle = BL; cx.lineWidth = 2; cx.stroke();
+    }
     cx.restore();
   }
 };
 
-// Saree token at the end
-function drawSaree(cx, x, y, t) {
-  cx.save(); cx.translate(x, y);
-  const float = Math.sin(t * 0.05) * 4;
-  // Halo
-  const grd = cx.createRadialGradient(0, float, 5, 0, float, 50);
-  grd.addColorStop(0, 'rgba(244,196,48,0.7)');
-  grd.addColorStop(1, 'rgba(244,196,48,0)');
-  cx.fillStyle = grd;
-  cx.beginPath(); cx.arc(0, float, 50, 0, Math.PI*2); cx.fill();
-  // Saree fabric (peacock blue with gold border)
-  cx.save(); cx.translate(0, float); cx.rotate(Math.sin(t*0.04)*0.05);
+// Muru in the auto, side profile facing right (towards the road)
+function drawMuruRider(cx, x, y, t) {
+  const wob = Math.sin(t * 0.3) * 1.5;
+  cx.save(); cx.translate(x, y + wob);
+
+  // Lower body / dhoti — shown from passenger seat
+  ol(cx, () => { cx.beginPath(); rR(cx, -6, -2, 18, 16, 3); }, '#FFFFF0');
+  cx.strokeStyle = '#C8900A'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.moveTo(-6, 12); cx.lineTo(12, 12); cx.stroke();
+
+  // Torso (red shirt) — slight forward lean
   ol(cx, () => {
     cx.beginPath();
-    cx.moveTo(-30, -25); cx.bezierCurveTo(-30, 0, -20, 25, 0, 25);
-    cx.bezierCurveTo(20, 25, 30, 0, 30, -25); cx.lineTo(-30, -25); cx.closePath();
-  }, '#1A6B8C');
-  // Gold border
-  cx.strokeStyle = '#F4C430'; cx.lineWidth = 4;
-  cx.beginPath(); cx.moveTo(-30, -25); cx.bezierCurveTo(-30, 0, -20, 25, 0, 25);
-  cx.bezierCurveTo(20, 25, 30, 0, 30, -25); cx.stroke();
-  // Peacock pattern
-  cx.fillStyle = '#0E6655';
-  [[-15,-10],[0,-5],[15,-12],[-8,8],[10,10]].forEach(([px,py])=>{
-    cx.beginPath(); cx.ellipse(px, py, 4, 2, 0, 0, Math.PI*2); cx.fill();
-  });
+    cx.moveTo(-8, -2); cx.lineTo(12, -4);
+    cx.lineTo(14, -22); cx.lineTo(-6, -20); cx.closePath();
+  }, '#C0392B');
+  // Gold chain glint
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 1.5;
+  cx.beginPath(); cx.arc(2, -10, 4, 0.2 * Math.PI, 0.8 * Math.PI); cx.stroke();
+
+  // Forward arm gripping the bar
+  ol(cx, () => { cx.beginPath(); rR(cx, 8, -16, 18, 4, 2); }, SK);
+  ol(cx, () => { cx.beginPath(); cx.arc(28, -14, 3.5, 0, Math.PI * 2); }, SK, 1.2);
+
+  // Head — profile facing right
+  ol(cx, () => { cx.beginPath(); cx.arc(2, -28, 11, 0, Math.PI * 2); }, SK);
+
+  // Hair (black, swept back from wind)
+  cx.fillStyle = BL;
+  cx.beginPath(); cx.arc(2, -32, 11, Math.PI + 0.05, -0.45); cx.fill();
+  // Wind streamers
+  cx.strokeStyle = BL; cx.lineWidth = 1.6; cx.lineCap = 'round';
+  cx.beginPath(); cx.moveTo(-7, -32); cx.quadraticCurveTo(-13, -34, -14, -29); cx.stroke();
+  cx.beginPath(); cx.moveTo(-7, -28); cx.quadraticCurveTo(-12, -28, -12, -25); cx.stroke();
+
+  // Sunglasses
+  cx.fillStyle = BL;
+  cx.fillRect(4, -30, 9, 4);
+  cx.strokeStyle = BL; cx.lineWidth = 1;
+  cx.beginPath(); cx.moveTo(4, -29); cx.lineTo(0, -29); cx.stroke();
+
+  // Mustache
+  cx.fillStyle = BL;
+  cx.fillRect(5, -22, 9, 2);
+  cx.fillRect(2, -23, 3, 3);   // left curl
+
+  // Smug smile
+  cx.strokeStyle = '#7A3A20'; cx.lineWidth = 1.5; cx.lineCap = 'round';
+  cx.beginPath(); cx.moveTo(5, -19); cx.lineTo(11, -18); cx.stroke();
+
+  // Ear hint
+  ol(cx, () => { cx.beginPath(); cx.arc(-7, -28, 3, 0, Math.PI * 2); }, SK, 1);
+
   cx.restore();
-  // Sparkles
-  for (let i = 0; i < 4; i++) {
-    const sa = (t * 0.05 + i * Math.PI / 2) % (Math.PI * 2);
-    const sx = Math.cos(sa) * 35;
-    const sy = Math.sin(sa) * 25 + float;
-    cx.fillStyle = 'rgba(255,255,200,0.9)';
-    cx.beginPath(); cx.arc(sx, sy, 2.5, 0, Math.PI*2); cx.fill();
+}
+
+// Saree token at the end — a flowing, draped Kanjivaram fabric
+function drawSaree(cx, x, y, t) {
+  cx.save(); cx.translate(x, y);
+  const float = Math.sin(t * 0.05) * 6;
+  const wave  = (k) => Math.sin(t * 0.05 + k) * 4;
+
+  // Outer halo
+  const halo = cx.createRadialGradient(0, float, 6, 0, float, 110);
+  halo.addColorStop(0,    'rgba(255,220,80,0.65)');
+  halo.addColorStop(0.55, 'rgba(255,180,40,0.25)');
+  halo.addColorStop(1,    'rgba(255,180,40,0)');
+  cx.fillStyle = halo;
+  cx.beginPath(); cx.arc(0, float, 110, 0, Math.PI * 2); cx.fill();
+
+  cx.save(); cx.translate(0, float); cx.rotate(Math.sin(t * 0.03) * 0.04);
+
+  // Main saree body — peacock blue, with rippled top + bottom edges (flowing)
+  cx.fillStyle = '#1A6B8C';
+  cx.strokeStyle = BL; cx.lineWidth = 2; cx.lineJoin = 'round';
+  cx.beginPath();
+  cx.moveTo(-65, -30 + wave(0));
+  cx.bezierCurveTo(-40, -32 + wave(0.7), -10, -26 + wave(1.2), 20, -32 + wave(1.7));
+  cx.bezierCurveTo(40, -34 + wave(2.2), 60, -28 + wave(2.7), 65, -22);
+  cx.lineTo(65, 14);
+  cx.bezierCurveTo(50, 18 + wave(0.4), 25, 14 + wave(1), -10, 18 + wave(1.6));
+  cx.bezierCurveTo(-30, 20 + wave(2.1), -55, 16 + wave(2.6), -65, 12);
+  cx.closePath();
+  cx.fill(); cx.stroke();
+
+  // Inner sheen — vertical pleats
+  cx.strokeStyle = 'rgba(255,255,255,0.18)';
+  cx.lineWidth = 1.2;
+  for (let i = -55; i <= 55; i += 8) {
+    cx.beginPath();
+    cx.moveTo(i, -28 + wave(i * 0.05));
+    cx.lineTo(i + 2, 12 + wave(i * 0.05 + 1));
+    cx.stroke();
   }
+
+  // Gold zari border along top
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 3;
+  cx.beginPath();
+  cx.moveTo(-65, -28 + wave(0));
+  cx.bezierCurveTo(-40, -30 + wave(0.7), -10, -24 + wave(1.2), 20, -30 + wave(1.7));
+  cx.bezierCurveTo(40, -32 + wave(2.2), 60, -26 + wave(2.7), 65, -20);
+  cx.stroke();
+
+  // Pallu (richly bordered bottom section)
+  cx.fillStyle = '#0E6655';
+  cx.beginPath();
+  cx.moveTo(-65, 4);
+  cx.bezierCurveTo(-30, 6 + wave(1.2), 20, 4 + wave(1.8), 65, 4);
+  cx.lineTo(65, 14);
+  cx.bezierCurveTo(50, 18 + wave(0.4), 25, 14 + wave(1), -10, 18 + wave(1.6));
+  cx.bezierCurveTo(-30, 20 + wave(2.1), -55, 16 + wave(2.6), -65, 12);
+  cx.closePath();
+  cx.fill();
+  cx.strokeStyle = BL; cx.lineWidth = 2; cx.stroke();
+  // Gold trim under pallu
+  cx.strokeStyle = '#F4C430'; cx.lineWidth = 2.5;
+  cx.beginPath();
+  cx.moveTo(-65, 14);
+  cx.bezierCurveTo(-30, 18 + wave(1.6), 20, 14 + wave(2.2), 65, 14);
+  cx.stroke();
+
+  // Peacock-feather motifs across the pallu
+  for (let i = -3; i <= 3; i++) {
+    const px = i * 18;
+    const py = 10;
+    // Eye of feather
+    cx.fillStyle = '#F4C430';
+    cx.beginPath(); cx.ellipse(px, py, 5, 7, 0, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = '#1A6B8C';
+    cx.beginPath(); cx.ellipse(px, py, 3.2, 4.5, 0, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = '#0E6655';
+    cx.beginPath(); cx.ellipse(px, py, 1.6, 2.5, 0, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = '#F4C430';
+    cx.beginPath(); cx.arc(px, py - 1, 0.8, 0, Math.PI * 2); cx.fill();
+  }
+
+  // Floral motifs scattered across the body (gold)
+  cx.fillStyle = '#F4C430';
+  [[-50, -18], [-25, -12], [0, -16], [25, -10], [50, -16], [-35, -4], [10, -3], [40, -6]].forEach(([fx, fy]) => {
+    for (let p = 0; p < 6; p++) {
+      const a = (p / 6) * Math.PI * 2;
+      cx.beginPath();
+      cx.ellipse(fx + Math.cos(a) * 3, fy + Math.sin(a) * 3, 1.2, 2, a, 0, Math.PI * 2);
+      cx.fill();
+    }
+    cx.fillStyle = '#FFE680';
+    cx.beginPath(); cx.arc(fx, fy, 1.3, 0, Math.PI * 2); cx.fill();
+    cx.fillStyle = '#F4C430';
+  });
+
+  cx.restore();
+
+  // Sparkles orbiting the saree
+  for (let i = 0; i < 8; i++) {
+    const sa = (t * 0.04 + i * Math.PI / 4) % (Math.PI * 2);
+    const sx = Math.cos(sa) * 80;
+    const sy = Math.sin(sa) * 35 + float;
+    const sz = 1.5 + Math.sin(t * 0.1 + i) * 1;
+    cx.fillStyle = 'rgba(255,255,200,0.9)';
+    cx.beginPath();
+    cx.moveTo(sx, sy - sz);
+    cx.lineTo(sx + sz, sy);
+    cx.lineTo(sx, sy + sz);
+    cx.lineTo(sx - sz, sy);
+    cx.closePath();
+    cx.fill();
+  }
+
   cx.restore();
 }
 
@@ -630,7 +915,27 @@ function updateL1(api) {
     L1.muru.ridingT--;
     L1.muru.y = L1.GROUND;
     L1.muru.vy = 0;
-    if (L1.muru.ridingT <= 0) L1.muru.riding = false;
+    // Just before dismount → clear any obstacles in the immediate landing zone
+    if (L1.muru.ridingT === 30) {
+      L1.obstacles.forEach(o => {
+        if (o.kind !== 'auto' && o.x > L1.MURU_X - 40 && o.x < L1.MURU_X + 260) {
+          for (let i = 0; i < 10; i++) {
+            L1.particles.push({
+              x: o.x + o.w / 2, y: o.baseY - o.h / 2,
+              vx: 3 + Math.random() * 6, vy: -3 - Math.random() * 5,
+              life: 30 + Math.random() * 10, color: i % 2 ? '#F4C430' : '#fff'
+            });
+          }
+          o.x = -400;
+        }
+      });
+      // Ensure the next spawn is also pushed back so the player has breathing room
+      L1.nextSpawnX = Math.max(L1.nextSpawnX, L1.W + 220);
+    }
+    if (L1.muru.ridingT <= 0) {
+      L1.muru.riding = false;
+      L1.hitCooldown = L1_TUNE.RIDE_GRACE;   // grace frames after dismount
+    }
   } else {
     // Edge-triggered jump start
     if (L1.jumpPress && !L1.muru.jumping) {
@@ -701,17 +1006,22 @@ function updateL1(api) {
   // Cooldown
   if (L1.hitCooldown > 0) L1.hitCooldown--;
 
-  // Collisions
-  const muruBox = { x: L1.MURU_X - 14, y: L1.muru.y - 60, w: 28, h: 60 };
+  // Collisions — collision box matches the scaled Muru sprite
+  const sc = L1_TUNE.MURU_SCALE;
+  const muruBox = {
+    x: L1.MURU_X - 14 * sc,
+    y: L1.muru.y - 60 * sc,
+    w: 28 * sc,
+    h: 60 * sc,
+  };
 
   for (const o of L1.obstacles) {
     const obBox = { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
     if (boxOverlap(muruBox, obBox)) {
       if (o.kind === 'auto') {
-        // Catch auto power-up
         if (!L1.muru.riding) {
           L1.muru.riding = true;
-          L1.muru.ridingT = 300;   // 5s @60fps
+          L1.muru.ridingT = L1_TUNE.RIDE_FRAMES;
           // Sparkle particles
           for (let i = 0; i < 14; i++) {
             L1.particles.push({
@@ -798,13 +1108,19 @@ function renderL1(cx) {
 
   // Muru — riding or running
   if (L1.muru.riding) {
-    // Auto rickshaw drawn under Muru
-    POWERUP_AUTO.draw(cx, L1.MURU_X - 30, L1.GROUND + Math.sin(L1.frame*0.3)*2, L1.frame);
-    drawMuru(cx, L1.MURU_X + 10, L1.GROUND - 22, L1.frame, false);
+    const ax = L1.MURU_X - 36;
+    const ay = L1.GROUND + Math.sin(L1.frame * 0.3) * 2;
+    POWERUP_AUTO.draw(cx, ax, ay, L1.frame, true);
+    // Rider, side profile, facing the road (right)
+    drawMuruRider(cx, L1.MURU_X + 14, ay - 20, L1.frame);
   } else {
     const flicker = L1.hitCooldown > 0 && Math.floor(L1.frame / 6) % 2 === 0;
     if (flicker) cx.globalAlpha = 0.4;
-    drawMuru(cx, L1.MURU_X, L1.muru.y, L1.frame, !L1.muru.jumping);
+    cx.save();
+    cx.translate(L1.MURU_X, L1.muru.y);
+    cx.scale(L1_TUNE.MURU_SCALE, L1_TUNE.MURU_SCALE);
+    drawMuru(cx, 0, 0, L1.frame, !L1.muru.jumping);
+    cx.restore();
     cx.globalAlpha = 1;
   }
 
