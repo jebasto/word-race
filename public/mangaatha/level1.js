@@ -2,28 +2,52 @@
 // Side-scrolling auto-runner. Jump over obstacles, catch the auto-rickshaw
 // for a 5-second invincibility blitz, grab the saree at the end.
 
-const L1 = {
-  // Geometry
-  W: 640, H: 260,
-  GROUND: 205,
-  MURU_X: 120,
+// Level 1 tunables — adjust these to change feel
+const L1_TUNE = {
+  W: 880, H: 320,
+  GROUND: 260,
+  MURU_X: 160,
+  // Jump physics
+  JUMP_VY: -10.5,           // initial impulse
+  GRAVITY_NORMAL: 0.55,     // gravity when not holding jump
+  GRAVITY_HOLD:   0.28,     // gravity while jump held (during ascent)
+  JUMP_HOLD_FRAMES: 16,     // up to N frames of reduced gravity
+  // Speed
+  SPEED_MIN: 2.4,
+  SPEED_MAX: 4.4,
+  SPEED_RAMP_DIST: 6500,    // distance to reach max speed
+  // Spacing
+  GAP_MIN: 280,
+  GAP_MAX: 540,
+  // Obstacle queue
+  TOTAL_OBSTACLES: 45,
+};
 
-  // Mutable state — reset() rebuilds everything
+const L1 = {
+  W: L1_TUNE.W, H: L1_TUNE.H,
+  GROUND: L1_TUNE.GROUND,
+  MURU_X: L1_TUNE.MURU_X,
+
   frame: 0,
-  speed: 2.5,
-  speedTarget: 2.5,
+  speed: L1_TUNE.SPEED_MIN,
+  speedTarget: L1_TUNE.SPEED_MIN,
   distance: 0,
-  state: 'idle',     // 'running' | 'won' | 'failed'
-  muru: { y: 205, vy: 0, jumping: false, riding: false, ridingT: 0 },
+  state: 'idle',
+  muru: {
+    y: L1_TUNE.GROUND, vy: 0,
+    jumping: false, jumpHoldT: 0,
+    riding: false, ridingT: 0,
+  },
   obstacles: [],
   queue: [],
   spawnedCount: 0,
-  nextSpawnX: 700,
+  nextSpawnX: L1_TUNE.W + 80,
   hitCooldown: 0,
   saree: null,
   bg: { far: 0, mid: 0, near: 0, ground: 0 },
   particles: [],
-  jumpRequested: false,
+  jumpPress: false,    // edge-triggered: set true once on press
+  jumpHeld:  false,    // continuous hold state
   totalObstacles: 0,
   lastEndline: 0,
 };
@@ -304,76 +328,224 @@ function drawSaree(cx, x, y, t) {
   cx.restore();
 }
 
+// ── Background palette ───────────────────────────────────────────
+const SHOPS = [
+  { sign:'SAREE KING',     base:'#C0392B', acc:'#FFD700', text:'#FFFFFF' },
+  { sign:'NALLI SILKS',    base:'#1A6B8C', acc:'#FFD700', text:'#FFFFFF' },
+  { sign:'POTHYS',         base:'#117A65', acc:'#FFD700', text:'#FFFFFF' },
+  { sign:'AANANDH STORES', base:'#F4C430', acc:'#8B0000', text:'#1A1A1A' },
+  { sign:'CHENNAI SILKS',  base:'#7B341E', acc:'#FFD700', text:'#FFFFFF' },
+  { sign:'KUMARAN STORES', base:'#922B21', acc:'#FFD700', text:'#FFFFFF' },
+];
+
+// Render one shop front at (bx, baseY..baseY+H) with proper signage, awnings, displays
+function drawShop(cx, bx, by, H, shop, frame) {
+  const w = 240, top = by;
+  // Shop body
+  cx.fillStyle = '#FFF8E0';   // cream wall
+  cx.fillRect(bx, top + 30, w, H - 30);
+  // Granite base
+  cx.fillStyle = '#3A2A1A';
+  cx.fillRect(bx, top + H - 14, w, 14);
+  cx.fillStyle = '#5A4A3A';
+  cx.fillRect(bx, top + H - 14, w, 3);
+
+  // Header signboard
+  cx.fillStyle = shop.base;
+  cx.fillRect(bx, top, w, 36);
+  // Gold trim
+  cx.fillStyle = shop.acc;
+  cx.fillRect(bx, top + 32, w, 4);
+  cx.fillRect(bx, top - 2, w, 3);
+  // Shop name
+  cx.fillStyle = shop.text;
+  cx.font = 'bold 18px Georgia, serif';
+  cx.textAlign = 'center';
+  cx.fillText(shop.sign, bx + w/2, top + 22);
+  // Tamil-look subtitle (decorative)
+  cx.fillStyle = shop.acc;
+  cx.font = 'bold 9px sans-serif';
+  cx.fillText('★ ESTD 1962 ★', bx + w/2, top + 32);
+  cx.textAlign = 'left';
+
+  // Striped awning under signboard
+  for (let i = 0; i < 12; i++) {
+    cx.fillStyle = (i % 2 === 0) ? shop.base : '#FFFFFF';
+    cx.beginPath();
+    cx.moveTo(bx + i * 20, top + 36);
+    cx.lineTo(bx + i * 20 + 10, top + 50);
+    cx.lineTo(bx + i * 20 + 20, top + 36);
+    cx.closePath();
+    cx.fill();
+  }
+
+  // Display windows with sarees on mannequins
+  const winY = top + 56;
+  const winH = H - 56 - 22;
+  // Left window
+  cx.fillStyle = '#3A2A1A';
+  cx.fillRect(bx + 12, winY, 80, winH);
+  cx.fillStyle = '#FFF8E0';
+  cx.fillRect(bx + 16, winY + 4, 72, winH - 8);
+  // Mannequin saree (random colour from palette)
+  const sareeColors = ['#1A6B8C', '#8B0000', '#117A65', '#F4C430', '#922B21'];
+  const sc1 = sareeColors[(Math.floor(bx/240) + 0) % sareeColors.length];
+  cx.fillStyle = sc1;
+  cx.beginPath();
+  cx.moveTo(bx + 30, winY + 10);
+  cx.lineTo(bx + 78, winY + 10);
+  cx.lineTo(bx + 76, winY + winH - 14);
+  cx.lineTo(bx + 32, winY + winH - 14);
+  cx.closePath();
+  cx.fill();
+  cx.strokeStyle = '#FFD700'; cx.lineWidth = 2;
+  cx.beginPath(); cx.moveTo(bx + 30, winY + 14); cx.lineTo(bx + 78, winY + 14); cx.stroke();
+  // Mannequin head
+  cx.fillStyle = '#C8956C';
+  cx.beginPath(); cx.arc(bx + 54, winY + 8, 6, 0, Math.PI * 2); cx.fill();
+
+  // Door
+  cx.fillStyle = '#3A2A1A';
+  cx.fillRect(bx + 100, winY, 40, winH);
+  cx.fillStyle = shop.base;
+  cx.fillRect(bx + 104, winY + 4, 32, winH - 4);
+  // Door panels
+  cx.strokeStyle = shop.acc; cx.lineWidth = 1;
+  cx.strokeRect(bx + 108, winY + 8, 24, 18);
+  cx.strokeRect(bx + 108, winY + 30, 24, 18);
+  // Handle
+  cx.fillStyle = shop.acc;
+  cx.beginPath(); cx.arc(bx + 130, winY + winH/2, 1.5, 0, Math.PI * 2); cx.fill();
+
+  // Right window
+  cx.fillStyle = '#3A2A1A';
+  cx.fillRect(bx + 148, winY, 80, winH);
+  cx.fillStyle = '#FFF8E0';
+  cx.fillRect(bx + 152, winY + 4, 72, winH - 8);
+  const sc2 = sareeColors[(Math.floor(bx/240) + 2) % sareeColors.length];
+  cx.fillStyle = sc2;
+  cx.beginPath();
+  cx.moveTo(bx + 166, winY + 10);
+  cx.lineTo(bx + 214, winY + 10);
+  cx.lineTo(bx + 212, winY + winH - 14);
+  cx.lineTo(bx + 168, winY + winH - 14);
+  cx.closePath();
+  cx.fill();
+  cx.strokeStyle = '#FFD700'; cx.lineWidth = 2;
+  cx.beginPath(); cx.moveTo(bx + 166, winY + 14); cx.lineTo(bx + 214, winY + 14); cx.stroke();
+  cx.fillStyle = '#C8956C';
+  cx.beginPath(); cx.arc(bx + 190, winY + 8, 6, 0, Math.PI * 2); cx.fill();
+
+  // String lights along top of awning
+  const lightOff = (frame * 0.04) % 1;
+  for (let i = 0; i < 8; i++) {
+    const lx = bx + 20 + i * 26;
+    cx.fillStyle = (Math.floor(i + frame * 0.05) % 2 === 0) ? '#FFD700' : '#FFFFFF';
+    cx.beginPath(); cx.arc(lx, top + 52, 2, 0, Math.PI * 2); cx.fill();
+  }
+}
+
+// Lamp post between shops
+function drawLamp(cx, bx, baseY) {
+  cx.fillStyle = '#1A1A1A';
+  cx.fillRect(bx - 2, baseY - 110, 4, 110);
+  cx.fillStyle = '#3A2A1A';
+  cx.fillRect(bx - 6, baseY - 5, 12, 5);
+  // Lamp head
+  cx.fillStyle = '#FFD700';
+  cx.beginPath(); cx.arc(bx, baseY - 110, 6, 0, Math.PI * 2); cx.fill();
+  cx.strokeStyle = '#1A1A1A'; cx.lineWidth = 2;
+  cx.beginPath(); cx.arc(bx, baseY - 110, 6, 0, Math.PI * 2); cx.stroke();
+  // Glow
+  cx.fillStyle = 'rgba(255,215,0,0.18)';
+  cx.beginPath(); cx.arc(bx, baseY - 110, 18, 0, Math.PI * 2); cx.fill();
+}
+
 // Backgrounds
 function drawL1Bg(cx, W, H, frame) {
-  // Sky
+  // Sky gradient — late afternoon
   const sky = cx.createLinearGradient(0, 0, 0, H);
-  sky.addColorStop(0, '#FFE680');
-  sky.addColorStop(0.7, '#FFF0B0');
-  sky.addColorStop(1, '#F4C460');
+  sky.addColorStop(0,    '#FFD580');
+  sky.addColorStop(0.45, '#FFE5A0');
+  sky.addColorStop(0.85, '#FFEEC0');
+  sky.addColorStop(1,    '#F4C460');
   cx.fillStyle = sky; cx.fillRect(0, 0, W, H);
 
-  // Far buildings (parallax slow)
+  // Distant temple gopuram silhouette + buildings (parallax slow)
   const farOff = -L1.bg.far;
-  cx.fillStyle = 'rgba(120,80,50,0.45)';
-  for (let bx = farOff % 280; bx < W + 50; bx += 280) {
-    const h1 = 110, h2 = 80, h3 = 95;
-    cx.fillRect(bx,       H - 80 - h1, 60, h1);
-    cx.fillRect(bx + 80,  H - 80 - h2, 50, h2);
-    cx.fillRect(bx + 150, H - 80 - h3, 70, h3);
-    cx.fillRect(bx + 240, H - 80 - 70, 40, 70);
-  }
-
-  // Mid shops with signs (parallax medium)
-  const midOff = -L1.bg.mid;
-  const shopColors = ['#C0392B', '#F4C430', '#117A65', '#7B341E', '#2874A6'];
-  const shopNames  = ['SAREE\nKING', 'AANANDH', 'NALLI', 'POTHYS', 'CHENNAI\nSILKS'];
-  for (let bx = midOff % 220, idx = Math.floor(L1.bg.mid / 220); bx < W + 50; bx += 220, idx++) {
-    const c = shopColors[Math.abs(idx) % shopColors.length];
-    const n = shopNames[Math.abs(idx) % shopNames.length];
-    // Shop body
-    cx.fillStyle = c; cx.fillRect(bx, H - 110, 200, 60);
-    cx.fillStyle = BL; cx.fillRect(bx, H - 110, 200, 4);
-    // Awning
-    cx.fillStyle = '#fff';
-    for (let i = 0; i < 8; i++) {
-      cx.beginPath();
-      cx.moveTo(bx + i * 25, H - 110);
-      cx.lineTo(bx + i * 25 + 12.5, H - 100);
-      cx.lineTo(bx + i * 25 + 25, H - 110);
-      cx.closePath();
-      cx.fillStyle = (i % 2 === 0) ? '#fff' : c;
-      cx.fill();
+  for (let bx = farOff % 360, idx = Math.floor(L1.bg.far / 360); bx < W + 50; bx += 360, idx++) {
+    cx.fillStyle = 'rgba(80,40,20,0.45)';
+    // Temple
+    cx.fillRect(bx + 30, H - 180, 80, 100);
+    cx.beginPath();
+    cx.moveTo(bx + 30, H - 180); cx.lineTo(bx + 70, H - 230); cx.lineTo(bx + 110, H - 180);
+    cx.fill();
+    // Smaller spires
+    cx.fillRect(bx + 130, H - 160, 50, 80);
+    cx.beginPath();
+    cx.moveTo(bx + 130, H - 160); cx.lineTo(bx + 155, H - 200); cx.lineTo(bx + 180, H - 160);
+    cx.fill();
+    // Apartment block
+    cx.fillRect(bx + 200, H - 180, 90, 100);
+    // Tiny windows
+    cx.fillStyle = 'rgba(255,200,100,0.5)';
+    for (let wy = 0; wy < 5; wy++) {
+      for (let wx = 0; wx < 4; wx++) {
+        if ((wx + wy + idx) % 3 !== 0)
+          cx.fillRect(bx + 210 + wx * 18, H - 170 + wy * 16, 6, 8);
+      }
     }
-    // Sign
-    cx.fillStyle = '#fff';
-    cx.font = 'bold 14px sans-serif'; cx.textAlign = 'center';
-    n.split('\n').forEach((line, li) => {
-      cx.fillText(line, bx + 100, H - 90 + li * 14);
-    });
-    // Door
-    cx.fillStyle = BL; cx.fillRect(bx + 90, H - 70, 20, 20);
-    cx.textAlign = 'left';
   }
 
-  // Near posters (parallax fast)
-  const nearOff = -L1.bg.near;
-  cx.fillStyle = 'rgba(192,57,43,0.7)';
-  for (let bx = nearOff % 150; bx < W + 50; bx += 150) {
-    cx.fillRect(bx, H - 60, 22, 32);
-    cx.fillStyle = '#F4C430'; cx.fillRect(bx + 2, H - 58, 18, 6);
-    cx.fillStyle = 'rgba(192,57,43,0.7)';
+  // Sky birds
+  for (let i = 0; i < 5; i++) {
+    const bx = ((i * 173 - L1.bg.far * 0.4) % (W + 60)) - 30;
+    const by = 30 + (i * 23) % 60;
+    cx.strokeStyle = 'rgba(50,30,20,0.55)'; cx.lineWidth = 1.5;
+    cx.beginPath();
+    cx.moveTo(bx, by); cx.quadraticCurveTo(bx + 4, by - 3, bx + 8, by);
+    cx.moveTo(bx + 8, by); cx.quadraticCurveTo(bx + 12, by - 3, bx + 16, by);
+    cx.stroke();
   }
 
-  // Ground (matches camera speed)
-  cx.fillStyle = '#7A5800'; cx.fillRect(0, L1.GROUND + 5, W, H - L1.GROUND - 5);
-  cx.fillStyle = '#5A3F00';
-  cx.fillRect(0, L1.GROUND + 5, W, 4);
-  // Tile seams
-  cx.strokeStyle = 'rgba(60,40,0,0.6)'; cx.lineWidth = 1.5;
-  const groundOff = -L1.bg.ground;
-  for (let gx = groundOff % 60; gx < W + 50; gx += 60) {
-    cx.beginPath(); cx.moveTo(gx, L1.GROUND + 9); cx.lineTo(gx, H); cx.stroke();
+  // Mid: Power lines + tall lamp posts (slower parallax)
+  const midSlowOff = -L1.bg.far * 1.3;
+  cx.strokeStyle = 'rgba(40,20,10,0.45)'; cx.lineWidth = 1;
+  cx.beginPath();
+  cx.moveTo(0, H - 200); cx.lineTo(W, H - 200);
+  cx.moveTo(0, H - 196); cx.lineTo(W, H - 196);
+  cx.stroke();
+
+  // Mid shops (parallax medium)
+  const midOff = -L1.bg.mid;
+  for (let bx = midOff % 280, idx = Math.floor(L1.bg.mid / 280); bx < W + 50; bx += 280, idx++) {
+    const shop = SHOPS[Math.abs(idx) % SHOPS.length];
+    drawShop(cx, bx, H - 178, 130, shop, frame);
+    // Lamp post in gap
+    drawLamp(cx, bx + 256, H - 48);
+  }
+
+  // Foreground sidewalk strip (parallax matches ground)
+  cx.fillStyle = '#9A7A5A';
+  cx.fillRect(0, L1.GROUND - 22, W, 18);
+  cx.fillStyle = '#7A5A3A';
+  cx.fillRect(0, L1.GROUND - 4, W, 4);
+
+  // Ground (street)
+  cx.fillStyle = '#5A3A1A';
+  cx.fillRect(0, L1.GROUND + 4, W, H - L1.GROUND - 4);
+  cx.fillStyle = '#3A2010';
+  cx.fillRect(0, L1.GROUND + 4, W, 4);
+  // Center yellow lane line — moving
+  const lineOff = -L1.bg.ground;
+  cx.fillStyle = '#FFD700';
+  for (let gx = lineOff % 80; gx < W + 50; gx += 80) {
+    cx.fillRect(gx, L1.GROUND + 30, 36, 4);
+  }
+  // Ground tile seams
+  cx.strokeStyle = 'rgba(0,0,0,0.25)'; cx.lineWidth = 1;
+  for (let gx = lineOff % 60; gx < W + 50; gx += 60) {
+    cx.beginPath(); cx.moveTo(gx, L1.GROUND + 8); cx.lineTo(gx, H); cx.stroke();
   }
 }
 
@@ -384,12 +556,22 @@ function generateL1Queue() {
   const pool = [];
   types.forEach((t, i) => { for (let k = 0; k < weights[i]; k++) pool.push(t); });
   const q = [];
-  // Avoid back-to-back same type
-  for (let i = 0; i < 45; i++) {
-    let pick;
-    do { pick = pool[Math.floor(Math.random() * pool.length)]; }
-    while (q.length && q[q.length - 1] === pick);
+  // Avoid back-to-back same type, also avoid two big tall obstacles in a row
+  const big = new Set(['cart', 'cow', 'idli', 'parkedAuto']);
+  for (let i = 0; i < L1_TUNE.TOTAL_OBSTACLES; i++) {
+    let pick, tries = 0;
+    do {
+      pick = pool[Math.floor(Math.random() * pool.length)];
+      tries++;
+    } while (tries < 8 && q.length && (
+      q[q.length - 1] === pick ||
+      (big.has(pick) && big.has(q[q.length - 1]))
+    ));
     q.push(pick);
+  }
+  // Ramp difficulty: first 8 obstacles biased to small (peel/dog/puddle/pothole)
+  for (let i = 0; i < 8; i++) {
+    if (big.has(q[i])) q[i] = ['peel','dog','puddle','pothole'][Math.floor(Math.random()*4)];
   }
   // Insert 3 auto power-ups roughly evenly
   [12, 24, 36].forEach((idx, i) => {
@@ -401,13 +583,14 @@ function generateL1Queue() {
 
 function resetL1() {
   L1.frame = 0;
-  L1.speed = 2.5;
-  L1.speedTarget = 2.5;
+  L1.speed = L1_TUNE.SPEED_MIN;
+  L1.speedTarget = L1_TUNE.SPEED_MIN;
   L1.distance = 0;
   L1.state = 'running';
   L1.muru.y = L1.GROUND;
   L1.muru.vy = 0;
   L1.muru.jumping = false;
+  L1.muru.jumpHoldT = 0;
   L1.muru.riding = false;
   L1.muru.ridingT = 0;
   L1.obstacles = [];
@@ -419,7 +602,8 @@ function resetL1() {
   L1.saree = null;
   L1.bg = { far: 0, mid: 0, near: 0, ground: 0 };
   L1.particles = [];
-  L1.jumpRequested = false;
+  L1.jumpPress = false;
+  L1.jumpHeld  = false;
   L1.lastEndline = 0;
 }
 
@@ -428,10 +612,10 @@ function updateL1(api) {
   if (L1.state !== 'running') return;
   L1.frame++;
 
-  // Speed ramp: 2.5 → 4.0 over 2400 frames (~40s)
-  L1.speedTarget = Math.min(4.0, 2.5 + L1.distance / 4000);
-  // During ride, blitz speed
-  const targetNow = L1.muru.riding ? 8.0 : L1.speedTarget;
+  // Speed ramp from MIN → MAX
+  const ramp = Math.min(1, L1.distance / L1_TUNE.SPEED_RAMP_DIST);
+  L1.speedTarget = L1_TUNE.SPEED_MIN + (L1_TUNE.SPEED_MAX - L1_TUNE.SPEED_MIN) * ramp;
+  const targetNow = L1.muru.riding ? 9.0 : L1.speedTarget;
   L1.speed += (targetNow - L1.speed) * 0.04;
   L1.distance += L1.speed;
 
@@ -441,26 +625,37 @@ function updateL1(api) {
   L1.bg.near   += L1.speed * 0.85;
   L1.bg.ground += L1.speed;
 
-  // Muru physics
+  // Muru physics (variable jump height)
   if (L1.muru.riding) {
     L1.muru.ridingT--;
     L1.muru.y = L1.GROUND;
     L1.muru.vy = 0;
-    if (L1.muru.ridingT <= 0) {
-      L1.muru.riding = false;
-    }
+    if (L1.muru.ridingT <= 0) L1.muru.riding = false;
   } else {
-    if (L1.jumpRequested && !L1.muru.jumping) {
-      L1.muru.vy = -12.5;
+    // Edge-triggered jump start
+    if (L1.jumpPress && !L1.muru.jumping) {
+      L1.muru.vy = L1_TUNE.JUMP_VY;
       L1.muru.jumping = true;
+      L1.muru.jumpHoldT = 0;
     }
-    L1.jumpRequested = false;
-    L1.muru.vy += 0.6;
+    L1.jumpPress = false;
+
+    // Reduced gravity while jump is HELD and we're ascending — variable jump height
+    let g = L1_TUNE.GRAVITY_NORMAL;
+    if (L1.muru.jumping
+        && L1.jumpHeld
+        && L1.muru.jumpHoldT < L1_TUNE.JUMP_HOLD_FRAMES
+        && L1.muru.vy < 0) {
+      g = L1_TUNE.GRAVITY_HOLD;
+      L1.muru.jumpHoldT++;
+    }
+    L1.muru.vy += g;
     L1.muru.y += L1.muru.vy;
     if (L1.muru.y >= L1.GROUND) {
       L1.muru.y = L1.GROUND;
       L1.muru.vy = 0;
       L1.muru.jumping = false;
+      L1.muru.jumpHoldT = 0;
     }
   }
 
@@ -482,8 +677,8 @@ function updateL1(api) {
         baseY: L1.GROUND
       });
     }
-    // Random gap 230–460
-    L1.nextSpawnX = L1.W + 50 + 230 + Math.random() * 230;
+    // Random gap (wider so variable-height jumps land cleanly)
+    L1.nextSpawnX = L1.W + 50 + L1_TUNE.GAP_MIN + Math.random() * (L1_TUNE.GAP_MAX - L1_TUNE.GAP_MIN);
   } else {
     L1.nextSpawnX -= L1.speed;
   }
@@ -644,8 +839,12 @@ const Level1 = {
     const cleared = Math.min(L1.totalObstacles, L1.spawnedCount - L1.obstacles.filter(o => o.kind !== 'auto').length);
     return `${L1.spawnedCount}/${L1.totalObstacles} obstacles · ${L1.muru.riding ? '⚡ BOOST' : 'GO!'}`;
   },
-  jump() {
-    if (L1.state === 'running' && !L1.muru.riding) L1.jumpRequested = true;
+  jumpPress() {
+    if (L1.state === 'running' && !L1.muru.riding) L1.jumpPress = true;
+  },
+  jumpHold(on) {
+    L1.jumpHeld = !!on;
+    if (on) this.jumpPress();
   },
   update(api) { updateL1(api || this.api); },
   render(cx)  { renderL1(cx); },

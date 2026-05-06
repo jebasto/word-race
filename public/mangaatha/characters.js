@@ -424,7 +424,7 @@ function drawMeenakshi(cx, x, y, t) {
 
 // ── Family roster (used by showcase + cutscenes) ───────────────────
 const FAMILY = [
-  { id:1, key:'mami',          name:'Paarvathi Mami', rel:'Mother-in-law',         color:'#8B0000', want:'A peacock-blue Kanjivaram with a gold border. Her exact size. Nothing else.', draw:drawMami },
+  { id:1, key:'mami',          name:'Paarvathi Mami', rel:'Mother-in-law',         color:'#8B0000', want:'A peacock-blue Kanjivaram with gold border, her exact size only. Bring back a "looks-similar" and the wedding card is going straight in the bin.', draw:drawMami },
   { id:2, key:'mama',          name:'Govindarajan Mama', rel:'Father-in-law',     color:'#4A235A', want:'An authentic Tanjore painting for his puja room — genuine 22 carat gold relief.', draw:drawGovindarajan },
   { id:3, key:'soundarya',     name:'Soundarya Akka',  rel:'Elder Sister-in-law', color:'#D35400', want:'Biryani from Annamalai mess — the original, before they close in 90 seconds.', draw:drawSoundarya },
   { id:4, key:'paati',         name:'Paati',           rel:'Grandmother',         color:'#1E8449', want:'Tirupati prasadam ladoo — climbed from the hill yourself, no shortcuts.', draw:drawPaati },

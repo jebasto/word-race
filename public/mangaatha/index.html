@@ -60,13 +60,24 @@
     <section class="screen" id="s-game">
       <div class="hud">
         <div class="hud-block">
-          <span class="hud-lives" id="hud-lives">❤️❤️❤️</span>
+          <span class="hud-lives" id="hud-lives" title="Lives remaining"></span>
         </div>
         <div class="hud-block">
           <span class="hud-level" id="hud-level">Level 1</span>
         </div>
         <div class="hud-block">
           <span class="hud-status" id="hud-status">—</span>
+          <button class="hud-pause" id="pause-btn" title="Pause (P)">⏸</button>
+        </div>
+      </div>
+      <div class="pause-overlay hidden" id="pause-overlay">
+        <div class="pause-card">
+          <h2>PAUSED</h2>
+          <p>Press P or tap to resume.</p>
+          <div class="pause-actions">
+            <button class="btn btn-red" id="resume-btn">▶ Resume</button>
+            <button class="btn btn-ghost" data-action="menu">Quit to Menu</button>
+          </div>
         </div>
       </div>
       <div class="progress-track thin"><div class="progress-fill" id="hud-progress"></div></div>

@@ -1,6 +1,10 @@
 // Mangaatha — main game loop, screen manager, persistence, glue.
 const $ = id => document.getElementById(id);
-const PROGRESS_KEY = 'mangaatha.save.v1';
+const PROGRESS_KEY = 'mangaatha.save.v2';
+
+// ── Tunables ─────────────────────────────────────────────────────
+const STARTING_LIVES   = 10;     // Lives at the start of a fresh adventure
+const DIALOGUE_AUTO_MS = 2000;   // Auto-advance gap after a line finishes typing
 
 // ── Persistence ──────────────────────────────────────────────────
 function loadSave() {
@@ -8,7 +12,7 @@ function loadSave() {
     const raw = localStorage.getItem(PROGRESS_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return { done: [], lives: 3 };
+  return { done: [], lives: STARTING_LIVES };
 }
 function saveSave() {
   try { localStorage.setItem(PROGRESS_KEY, JSON.stringify({ done: G.done, lives: G.lives })); } catch {}
@@ -21,13 +25,13 @@ const G = {
   screen: 'menu',
   level: 0,
   done: persist.done.slice(),
-  lives: persist.lives ?? 3,
+  lives: persist.lives ?? STARTING_LIVES,
   cutscene: null,
   cutLine: 0,
   cutFrame: 0,
   rafId: null,
-  active: null,   // current Level1/Level2 object
-  hint: '',
+  active: null,
+  paused: false,
 };
 
 // ── Screen manager ───────────────────────────────────────────────
@@ -95,62 +99,74 @@ function enterFamily() {
   $('family-detail').classList.add('hidden');
 }
 
-// ── Cutscene ─────────────────────────────────────────────────────
+// ── Cutscene (auto-advances after typing finishes + a 2s gap) ────
 let cutTyper = null;
+let cutAutoT = null;
+
 function enterCutscene() {
   G.cutFrame = 0;
   G.cutLine = 0;
   showCutLine();
   cutLoop();
 }
+
 function cutLoop() {
   G.cutFrame++;
   const scene = SCENES[G.cutscene];
   if (!scene) return;
   const line = scene[G.cutLine];
-  if (line) {
-    drawCutsceneAvatar($('cut-canvas'), line.who, G.cutFrame);
-  }
+  if (line) drawCutsceneAvatar($('cut-canvas'), line.who, G.cutFrame);
   G.rafId = requestAnimationFrame(cutLoop);
 }
+
 function showCutLine() {
   const scene = SCENES[G.cutscene];
   if (!scene) { advanceCutscene(); return; }
   const line = scene[G.cutLine];
   if (!line) { advanceCutscene(); return; }
-  // Name
   if (line.who === 'muru') $('cut-name').textContent = 'MURU';
   else {
     const m = FAMILY.find(f => f.key === line.who);
     $('cut-name').textContent = m ? m.name.toUpperCase() : line.who.toUpperCase();
   }
-  // Typewriter
   const bubble = $('cut-bubble');
   bubble.textContent = '';
-  if (cutTyper) clearInterval(cutTyper);
+  clearTimers();
   let i = 0;
   cutTyper = setInterval(() => {
     bubble.textContent = line.text.slice(0, ++i);
-    if (i >= line.text.length) clearInterval(cutTyper);
+    if (i >= line.text.length) {
+      clearInterval(cutTyper); cutTyper = null;
+      // Auto-advance after the gap (or instant on tap/space)
+      cutAutoT = setTimeout(() => { cutAutoT = null; nextCutLine(); }, DIALOGUE_AUTO_MS);
+    }
   }, 22);
 }
+
+function clearTimers() {
+  if (cutTyper) { clearInterval(cutTyper); cutTyper = null; }
+  if (cutAutoT) { clearTimeout(cutAutoT); cutAutoT = null; }
+}
+
 function nextCutLine() {
-  // If still typing, complete instantly
+  // If still typing, complete instantly + start auto-advance
   if (cutTyper) {
-    clearInterval(cutTyper);
+    clearInterval(cutTyper); cutTyper = null;
     const scene = SCENES[G.cutscene];
     const line = scene[G.cutLine];
     $('cut-bubble').textContent = line.text;
-    cutTyper = null;
+    cutAutoT = setTimeout(() => { cutAutoT = null; nextCutLine(); }, DIALOGUE_AUTO_MS);
     return;
   }
+  if (cutAutoT) { clearTimeout(cutAutoT); cutAutoT = null; }
   G.cutLine++;
   const scene = SCENES[G.cutscene];
-  if (G.cutLine >= scene.length) advanceCutscene();
+  if (!scene || G.cutLine >= scene.length) advanceCutscene();
   else showCutLine();
 }
+
 function skipCutscene() {
-  if (cutTyper) clearInterval(cutTyper);
+  clearTimers();
   advanceCutscene();
 }
 function advanceCutscene() {
@@ -188,20 +204,35 @@ function enterGame() {
     G.active = Level2;
   }
   G.active.init(api);
+  G.paused = false;
+  $('pause-overlay').classList.add('hidden');
   updateLivesHud();
   updateProgressHud();
   $('game-hint').textContent = G.level === 1
-    ? 'Tap / Space / ↑ to jump · Catch the auto for a 5-second blitz'
-    : 'Arrow keys / D-pad to move · Stay out of guard vision · Grab the painting';
+    ? 'Tap/Space/↑ to jump — HOLD for higher jump · Catch the auto for a 5s blitz · P to pause'
+    : 'Arrow keys / D-pad to move · Stay out of guard vision · P to pause';
   gameLoop();
 }
 
 function gameLoop() {
-  G.active.update(api);
+  if (!G.paused) G.active.update(api);
   const cx = $('game-canvas').getContext('2d');
   G.active.render(cx);
-  $('hud-status').textContent = G.active.status();
+  $('hud-status').textContent = G.paused ? 'PAUSED' : G.active.status();
   G.rafId = requestAnimationFrame(gameLoop);
+}
+
+function setPaused(on) {
+  G.paused = on;
+  $('pause-overlay').classList.toggle('hidden', !on);
+  // Release keyboard inputs so movement doesn't keep building up
+  if (on && G.level === 2) {
+    Level2.setDir('up', false); Level2.setDir('down', false);
+    Level2.setDir('left', false); Level2.setDir('right', false);
+  }
+  if (on && G.level === 1) {
+    Level1.jumpHold(false);
+  }
 }
 
 // API for levels to call back
@@ -235,7 +266,10 @@ const api = {
 };
 
 function updateLivesHud() {
-  $('hud-lives').textContent = '❤️'.repeat(G.lives) + '🖤'.repeat(Math.max(0, 3 - G.lives));
+  // Compact for >=4 lives so the HUD doesn't get cluttered with the new 10-life default
+  $('hud-lives').textContent = G.lives <= 3
+    ? '❤️'.repeat(Math.max(0, G.lives)) + '🖤'.repeat(Math.max(0, 3 - G.lives))
+    : `× ${G.lives}`;
 }
 function updateProgressHud() {
   $('hud-progress').style.width = (G.done.length * 12.5) + '%';
@@ -284,14 +318,12 @@ document.addEventListener('click', e => {
   if (act === 'start')  startAdventure();
   if (act === 'family') show('family');
   if (act === 'menu')   show('menu');
-  if (act === 'reset')  { G.done = []; G.lives = 3; G.level = 0; clearSave(); show('menu'); }
+  if (act === 'reset')  { G.done = []; G.lives = STARTING_LIVES; G.level = 0; clearSave(); show('menu'); }
   if (act === 'retry')  retryLevel();
 });
 
 function startAdventure() {
-  // Resume from where we left off
-  G.lives = G.lives ?? 3;
-  if (G.lives <= 0) G.lives = 3;
+  if (!Number.isFinite(G.lives) || G.lives <= 0) G.lives = STARTING_LIVES;
   G.level = G.done.length + 1;
   if (G.level > 8) { show('end'); return; }
   if (G.level > 2) { alert('Levels 3+ coming soon — only L1 and L2 are built!'); return; }
@@ -300,9 +332,9 @@ function startAdventure() {
 }
 
 function retryLevel() {
-  if (G.lives <= 0) { G.lives = 3; saveSave(); }
-  G.cutscene = 'pre' + G.level;
-  show('cutscene');
+  if (G.lives <= 0) { G.lives = STARTING_LIVES; saveSave(); }
+  // Skip the intro cutscene — straight back into action
+  show('game');
 }
 
 $('cut-next').addEventListener('click', nextCutLine);
@@ -316,9 +348,18 @@ window.addEventListener('keydown', e => {
     return;
   }
   if (G.screen !== 'game') return;
+
+  // Pause toggle (P or Escape)
+  if (e.code === 'KeyP' || e.code === 'Escape') {
+    e.preventDefault(); setPaused(!G.paused); return;
+  }
+  if (G.paused) return;
+
   if (G.level === 1) {
     if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
-      e.preventDefault(); Level1.jump();
+      e.preventDefault();
+      if (!e.repeat) Level1.jumpPress();
+      Level1.jumpHold(true);
     }
   } else if (G.level === 2) {
     const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
@@ -327,16 +368,30 @@ window.addEventListener('keydown', e => {
   }
 });
 window.addEventListener('keyup', e => {
-  if (G.screen !== 'game' || G.level !== 2) return;
-  const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
-                ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right' };
-  if (map[e.code]) Level2.setDir(map[e.code], false);
+  if (G.screen !== 'game') return;
+  if (G.level === 1) {
+    if (['Space','ArrowUp','KeyW'].includes(e.code)) Level1.jumpHold(false);
+  } else if (G.level === 2) {
+    const map = { ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+                  ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right' };
+    if (map[e.code]) Level2.setDir(map[e.code], false);
+  }
 });
 
-// Touch / click on game canvas (Level 1 jump)
-$('game-canvas').addEventListener('pointerdown', () => {
-  if (G.screen === 'game' && G.level === 1) Level1.jump();
+// Touch / click on game canvas (Level 1 — jump press + hold-to-go-higher)
+$('game-canvas').addEventListener('pointerdown', e => {
+  if (G.screen !== 'game' || G.level !== 1 || G.paused) return;
+  Level1.jumpPress();
+  Level1.jumpHold(true);
 });
+$('game-canvas').addEventListener('pointerup',     () => { if (G.level === 1) Level1.jumpHold(false); });
+$('game-canvas').addEventListener('pointerleave',  () => { if (G.level === 1) Level1.jumpHold(false); });
+$('game-canvas').addEventListener('pointercancel', () => { if (G.level === 1) Level1.jumpHold(false); });
+
+// Pause button + click-to-resume on the overlay
+$('pause-btn').addEventListener('click',     () => setPaused(true));
+$('resume-btn').addEventListener('click',    () => setPaused(false));
+$('pause-overlay').addEventListener('click', e => { if (e.target === $('pause-overlay')) setPaused(false); });
 
 // Touch pad (Level 2)
 document.querySelectorAll('.dpad-btn').forEach(b => {
