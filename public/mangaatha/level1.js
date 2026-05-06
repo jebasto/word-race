@@ -14,16 +14,16 @@ const L1_TUNE = {
   GRAVITY_HOLD:   0.27,
   JUMP_HOLD_FRAMES: 17,
   // Speed
-  SPEED_MIN: 3.6,
-  SPEED_MAX: 6.6,
-  SPEED_RAMP_DIST: 4500,
+  SPEED_MIN: 4.6,
+  SPEED_MAX: 8.4,
+  SPEED_RAMP_DIST: 4000,
   // Spacing
   GAP_MIN: 290,
   GAP_MAX: 560,
   // Obstacle queue
   TOTAL_OBSTACLES: 45,
   NUM_AUTOS: 2,
-  NUM_HEARTS: 3,
+  NUM_COFFEES: 3,            // filter coffee pickups (each gives +1 life)
   // Power-up
   RIDE_FRAMES: 300,
   RIDE_GRACE: 90,
@@ -176,46 +176,72 @@ const OB_TYPES = {
     }
   },
   peel: {
-    w: 36, h: 14,
+    w: 60, h: 18,
     draw(cx, x, by, t) {
-      // A real banana peel: stem in the middle, three flaps splayed flat on the ground.
-      cx.save();
-      // Faint shadow under it (so it reads as on-the-ground)
-      cx.fillStyle = 'rgba(0,0,0,0.18)';
-      cx.beginPath(); cx.ellipse(x + 18, by - 1, 18, 4, 0, 0, Math.PI * 2); cx.fill();
+      // Two banana peels lying on the road — clear cartoon C-shapes with
+      // brown stems on the inner edge and pale cream interiors.
+      const FUR  = '#FFE03A';   // bright yellow
+      const FUR2 = '#E8B400';   // shadow yellow
+      const STEM = '#7A4014';
+      const CREAM= '#FFFAEA';
 
-      cx.translate(x + 18, by - 2);
-      cx.fillStyle = '#FFD700';
-      cx.strokeStyle = BL; cx.lineWidth = 1.5; cx.lineJoin = 'round';
-      // Left flap
+      // Soft ground shadow under both peels
+      cx.fillStyle = 'rgba(0,0,0,0.30)';
       cx.beginPath();
-      cx.moveTo(0, 0);
-      cx.bezierCurveTo(-6, -8, -16, -6, -18, 0);
-      cx.bezierCurveTo(-14, 4, -6, 3, 0, 0);
-      cx.closePath(); cx.fill(); cx.stroke();
-      // Right flap
-      cx.beginPath();
-      cx.moveTo(0, 0);
-      cx.bezierCurveTo(8, -8, 16, -2, 14, 4);
-      cx.bezierCurveTo(8, 5, 2, 3, 0, 0);
-      cx.closePath(); cx.fill(); cx.stroke();
-      // Front flap
-      cx.beginPath();
-      cx.moveTo(0, 0);
-      cx.bezierCurveTo(-4, 4, 4, 5, 7, 1);
-      cx.bezierCurveTo(5, -2, 0, -2, 0, 0);
-      cx.closePath(); cx.fill(); cx.stroke();
-      // Stem
-      cx.fillStyle = '#7A4014';
-      cx.beginPath(); cx.ellipse(0, -2, 2.5, 2, 0, 0, Math.PI * 2); cx.fill();
-      cx.strokeStyle = BL; cx.lineWidth = 1; cx.stroke();
-      // Inner texture lines
-      cx.strokeStyle = 'rgba(180,140,30,0.55)'; cx.lineWidth = 0.8;
-      cx.beginPath(); cx.moveTo(-12, -3); cx.lineTo(-3, 0);
-      cx.moveTo(10, -2); cx.lineTo(2, 0);
-      cx.moveTo(0, 1); cx.lineTo(3, 4);
-      cx.stroke();
-      cx.restore();
+      cx.ellipse(x + 30, by - 1, 30, 5, 0, 0, Math.PI * 2);
+      cx.fill();
+
+      // Helper: draw one peel half curving in a direction
+      // dir = -1 → curls left (stem on right), dir = +1 → curls right (stem on left)
+      function peelHalf(cx, cx2, cy, dir) {
+        cx.save();
+        cx.translate(cx2, cy);
+        cx.scale(dir, 1);
+        // Outer curl outline
+        cx.fillStyle = FUR;
+        cx.strokeStyle = BL; cx.lineWidth = 1.8; cx.lineJoin = 'round';
+        cx.beginPath();
+        cx.moveTo(0, -2);
+        cx.bezierCurveTo(8, -10, 22, -6, 26, 4);     // outer curve
+        cx.lineTo(22, 6);
+        cx.bezierCurveTo(20, 0, 12, -2, 4, 1);       // inner sweep
+        cx.bezierCurveTo(2, 1, 0, 0, 0, -2);
+        cx.closePath();
+        cx.fill(); cx.stroke();
+        // Cream inside (showing peeled flesh)
+        cx.fillStyle = CREAM;
+        cx.beginPath();
+        cx.moveTo(3, 0);
+        cx.bezierCurveTo(10, -7, 20, -4, 23, 3);
+        cx.bezierCurveTo(20, 1, 14, 0, 8, 1);
+        cx.bezierCurveTo(5, 1, 4, 0, 3, 0);
+        cx.closePath();
+        cx.fill();
+        // Shadow streak inside curl
+        cx.strokeStyle = FUR2; cx.lineWidth = 1.2;
+        cx.beginPath();
+        cx.moveTo(6, 2); cx.bezierCurveTo(14, -3, 22, 0, 24, 5);
+        cx.stroke();
+        // Fiber lines
+        cx.strokeStyle = 'rgba(170,130,20,0.55)'; cx.lineWidth = 0.7;
+        cx.beginPath();
+        cx.moveTo(8, -4); cx.lineTo(20, 0);
+        cx.moveTo(11, -1); cx.lineTo(20, 3);
+        cx.stroke();
+        // Stem nub on the inner end
+        cx.fillStyle = STEM;
+        cx.beginPath();
+        cx.ellipse(-1, -1, 3, 2.2, 0, 0, Math.PI * 2);
+        cx.fill();
+        cx.strokeStyle = BL; cx.lineWidth = 1.2;
+        cx.stroke();
+        cx.restore();
+      }
+
+      // Left peel curls leftwards (stem on the right)
+      peelHalf(cx, x + 24, by - 4, -1);
+      // Right peel curls rightwards (stem on the left), placed slightly forward
+      peelHalf(cx, x + 36, by - 2, +1);
     }
   },
   puddle: {
@@ -529,44 +555,101 @@ function drawMuruRider(cx, x, y, t) {
   cx.restore();
 }
 
-// Heart pickup (+1 life), floats mid-air requiring a held jump to grab
-function drawHeart(cx, x, y, t) {
+// Filter coffee pickup (+1 life): steel tumbler in a dabarah, steaming
+function drawCoffee(cx, x, y, t) {
   const float = Math.sin(t * 0.06) * 4;
-  const pulse = 1 + Math.sin(t * 0.14) * 0.08;
-  cx.save(); cx.translate(x, y + float);
-  // Glow
-  const grd = cx.createRadialGradient(0, 0, 4, 0, 0, 34 * pulse);
-  grd.addColorStop(0,    'rgba(255,120,170,0.7)');
-  grd.addColorStop(0.6,  'rgba(255,80,140,0.30)');
-  grd.addColorStop(1,    'rgba(255,80,140,0)');
+  const pulse = 1 + Math.sin(t * 0.13) * 0.06;
+  cx.save();
+  cx.translate(x, y + float);
+
+  // Outer glow
+  const grd = cx.createRadialGradient(0, 0, 4, 0, 0, 44 * pulse);
+  grd.addColorStop(0,   'rgba(244,196,48,0.55)');
+  grd.addColorStop(0.6, 'rgba(255,140,40,0.22)');
+  grd.addColorStop(1,   'rgba(255,140,40,0)');
   cx.fillStyle = grd;
-  cx.fillRect(-36, -36, 72, 72);
+  cx.fillRect(-44, -44, 88, 88);
+
+  // Steam rising — three wavy plumes
+  cx.strokeStyle = 'rgba(255,255,255,0.85)';
+  cx.lineWidth = 2.2; cx.lineCap = 'round';
+  const sw = Math.sin(t * 0.12) * 3;
+  for (let i = -1; i <= 1; i++) {
+    cx.beginPath();
+    cx.moveTo(i * 7 + sw * 0.5, -22);
+    cx.bezierCurveTo(i * 7 - 4 + sw, -28, i * 7 + 4 + sw, -34, i * 7 + sw * 1.5, -42);
+    cx.stroke();
+  }
+
   cx.scale(pulse, pulse);
-  // Heart shape
-  cx.fillStyle = '#E91E63';
-  cx.strokeStyle = BL; cx.lineWidth = 1.6; cx.lineJoin = 'round';
+
+  // Tumbler — slightly tapered steel, bigger than original
+  ol(cx, () => {
+    cx.beginPath();
+    cx.moveTo(-13, -22);
+    cx.bezierCurveTo(-13, -22, -13, -22, -13, -22);
+    cx.lineTo(13, -22);
+    cx.lineTo(11, 6);
+    cx.lineTo(-11, 6);
+    cx.closePath();
+  }, '#D8D8D8', 1.8);
+
+  // Coffee fill (dark brown band at the top with a foam crema)
+  cx.fillStyle = '#3a1a06';
+  cx.fillRect(-12, -22, 24, 5);
+  // Foam — wavy white top
+  cx.fillStyle = '#fff';
   cx.beginPath();
-  cx.moveTo(0, 8);
-  cx.bezierCurveTo(-14, -4, -14, -18, 0, -10);
-  cx.bezierCurveTo(14, -18, 14, -4, 0, 8);
+  cx.moveTo(-12, -19);
+  cx.bezierCurveTo(-7, -22, -2, -18, 3, -21);
+  cx.bezierCurveTo(7, -19, 10, -21, 12, -19);
+  cx.lineTo(12, -16);
+  cx.lineTo(-12, -16);
   cx.closePath();
-  cx.fill(); cx.stroke();
-  // Highlight
-  cx.fillStyle = 'rgba(255,255,255,0.7)';
-  cx.beginPath(); cx.ellipse(-4, -6, 2.2, 3.3, 0.4, 0, Math.PI * 2); cx.fill();
-  // "+1"
+  cx.fill();
+
+  // Steel ridges (horizontal lines)
+  cx.strokeStyle = 'rgba(120,120,120,0.7)';
+  cx.lineWidth = 1;
+  cx.beginPath();
+  cx.moveTo(-12, -10); cx.lineTo(12, -10);
+  cx.moveTo(-12, -2);  cx.lineTo(12, -2);
+  cx.stroke();
+  // Highlight stripe
+  cx.fillStyle = 'rgba(255,255,255,0.45)';
+  cx.fillRect(-9, -20, 2, 24);
+
+  // Dabarah (steel saucer below the tumbler)
+  ol(cx, () => {
+    cx.beginPath();
+    cx.moveTo(-18, 6);
+    cx.lineTo(18, 6);
+    cx.lineTo(14, 16);
+    cx.lineTo(-14, 16);
+    cx.closePath();
+  }, '#B8B8B8', 1.8);
+  cx.fillStyle = '#888';
+  cx.fillRect(-15, 7, 30, 2);
+  cx.fillStyle = 'rgba(255,255,255,0.4)';
+  cx.fillRect(-12, 9, 4, 1);
+
   cx.scale(1 / pulse, 1 / pulse);
+
+  // "+1" pill below
+  ol(cx, () => { cx.beginPath(); rR(cx, -16, 22, 32, 14, 7); }, '#E91E63', 1.5);
   cx.fillStyle = '#fff';
   cx.font = 'bold 10px sans-serif'; cx.textAlign = 'center';
-  cx.fillText('+1', 0, -2);
+  cx.fillText('+1 LIFE', 0, 32);
   cx.textAlign = 'left';
+
   cx.restore();
-  // Sparkles around
-  for (let i = 0; i < 3; i++) {
-    const a = (t * 0.07 + i * Math.PI * 2 / 3);
-    cx.fillStyle = 'rgba(255,255,255,0.8)';
+
+  // Orbiting sparkles
+  for (let i = 0; i < 4; i++) {
+    const a = (t * 0.06 + i * Math.PI / 2);
+    cx.fillStyle = 'rgba(255,255,200,0.85)';
     cx.beginPath();
-    cx.arc(x + Math.cos(a) * 26, y + Math.sin(a) * 18 + float, 1.5, 0, Math.PI * 2);
+    cx.arc(x + Math.cos(a) * 32, y + Math.sin(a) * 22 + float, 1.6, 0, Math.PI * 2);
     cx.fill();
   }
 }
@@ -902,41 +985,71 @@ function drawL1Bg(cx, W, H, frame) {
   cx.moveTo(0, H - 196); cx.lineTo(W, H - 196);
   cx.stroke();
 
-  // Mid shops (parallax medium)
+  // Sidewalk above the road. Shops sit on the sidewalk top.
+  // Layout (bottom to top):
+  //   road:     GROUND - 32 → H        (visible road extends up well above feet)
+  //   curb:     GROUND - 36 → GROUND - 32  (dark seam)
+  //   sidewalk: GROUND - 56 → GROUND - 36  (cream stone)
+  //   shops:    sit on sidewalk top (GROUND - 56)
+  const SIDEWALK_TOP = L1.GROUND - 56;
+  const ROAD_TOP     = L1.GROUND - 32;
+
+  // Mid shops anchored to sidewalk top
   const midOff = -L1.bg.mid;
   for (let bx = midOff % 280, idx = Math.floor(L1.bg.mid / 280); bx < W + 50; bx += 280, idx++) {
     const shop = SHOPS[Math.abs(idx) % SHOPS.length];
-    drawShop(cx, bx, H - 178, 130, shop, frame);
-    // Lamp post in gap
-    drawLamp(cx, bx + 256, H - 48);
+    drawShop(cx, bx, SIDEWALK_TOP - 130, 130, shop, frame);
+    drawLamp(cx, bx + 256, SIDEWALK_TOP);
   }
 
-  // Sidewalk above the road (curb edge), then road extends right up to the
-  // ground line so obstacles look planted ON the road, not floating above it.
+  // Sidewalk
   cx.fillStyle = '#9A7A5A';
-  cx.fillRect(0, L1.GROUND - 32, W, 22);
-  cx.fillStyle = '#7A5A3A';
-  cx.fillRect(0, L1.GROUND - 12, W, 4);
+  cx.fillRect(0, SIDEWALK_TOP, W, 20);
+  // Sidewalk seam lines
+  cx.strokeStyle = 'rgba(60,40,20,0.35)'; cx.lineWidth = 1;
+  const swOff = -L1.bg.mid;
+  for (let sx = swOff % 70; sx < W + 50; sx += 70) {
+    cx.beginPath(); cx.moveTo(sx, SIDEWALK_TOP); cx.lineTo(sx, ROAD_TOP); cx.stroke();
+  }
 
-  // Road surface — starts AT the ground line (no gap)
-  cx.fillStyle = '#3D2614';
-  cx.fillRect(0, L1.GROUND - 8, W, H - L1.GROUND + 8);
-  // Curb shadow
+  // Curb (dark band)
+  cx.fillStyle = '#3A2618';
+  cx.fillRect(0, ROAD_TOP - 4, W, 4);
   cx.fillStyle = '#1F1208';
-  cx.fillRect(0, L1.GROUND - 8, W, 4);
-  // Subtle gravel speckles on the road
+  cx.fillRect(0, ROAD_TOP, W, 3);
+
+  // Road surface — extends well above obstacles' feet
+  cx.fillStyle = '#3D2614';
+  cx.fillRect(0, ROAD_TOP, W, H - ROAD_TOP);
+
+  // Asphalt mottling (large patches)
   const lineOff = -L1.bg.ground;
+  cx.fillStyle = 'rgba(80,55,30,0.35)';
+  for (let i = 0; i < 6; i++) {
+    const sx = ((i * 167 + lineOff * 0.7) % (W + 80)) - 40;
+    const sy = ROAD_TOP + 8 + (i * 41) % (H - ROAD_TOP - 16);
+    cx.beginPath(); cx.ellipse(sx, sy, 30 + (i * 7) % 18, 6, 0, 0, Math.PI * 2); cx.fill();
+  }
+  // Gravel speckles
   cx.fillStyle = 'rgba(150,120,80,0.25)';
-  for (let i = 0; i < 22; i++) {
+  for (let i = 0; i < 36; i++) {
     const sx = ((i * 73 + lineOff) % (W + 40));
-    const sy = L1.GROUND + 4 + (i * 17) % (H - L1.GROUND - 8);
+    const sy = ROAD_TOP + 8 + (i * 17) % (H - ROAD_TOP - 12);
     cx.fillRect(sx, sy, 1.5, 1.5);
   }
-  // Subtle dashed center line (low intensity)
-  cx.fillStyle = 'rgba(244,196,48,0.32)';
-  for (let gx = lineOff % 110; gx < W + 50; gx += 110) {
-    cx.fillRect(gx, L1.GROUND + 28, 22, 2);
+  // Subtle dashed center line — well below the feet
+  cx.fillStyle = 'rgba(244,196,48,0.28)';
+  for (let gx = lineOff % 130; gx < W + 50; gx += 130) {
+    cx.fillRect(gx, L1.GROUND + 38, 22, 2);
   }
+}
+
+// Drop shadow drawn under each grounded obstacle (called from render)
+function drawObstacleShadow(cx, x, baseY, w) {
+  cx.fillStyle = 'rgba(0,0,0,0.32)';
+  cx.beginPath();
+  cx.ellipse(x + w / 2, baseY - 1, w * 0.46, 4, 0, 0, Math.PI * 2);
+  cx.fill();
 }
 
 // ── Generation ────────────────────────────────────────────────────
@@ -971,13 +1084,13 @@ function generateL1Queue() {
   autoSpots.sort((a,b) => a-b).forEach((idx, i) => {
     q.splice(idx + i, 0, '__auto__');
   });
-  // Insert heart pickups
-  const heartSpots = [];
-  for (let i = 0; i < L1_TUNE.NUM_HEARTS; i++) {
-    heartSpots.push(5 + Math.floor((q.length / L1_TUNE.NUM_HEARTS) * (i + 0.4)) + Math.floor(Math.random()*5-2));
+  // Insert filter-coffee pickups
+  const coffeeSpots = [];
+  for (let i = 0; i < L1_TUNE.NUM_COFFEES; i++) {
+    coffeeSpots.push(5 + Math.floor((q.length / L1_TUNE.NUM_COFFEES) * (i + 0.4)) + Math.floor(Math.random()*5-2));
   }
-  heartSpots.sort((a,b) => a-b).forEach((idx, i) => {
-    q.splice(idx + i, 0, '__heart__');
+  coffeeSpots.sort((a,b) => a-b).forEach((idx, i) => {
+    q.splice(idx + i, 0, '__coffee__');
   });
   return q;
 }
@@ -1035,7 +1148,7 @@ function updateL1(api) {
     // obstacle can sneak in between checks. Also push next-spawn far back.
     if (L1.muru.ridingT <= 45) {
       L1.obstacles.forEach(o => {
-        if (o.kind !== 'auto' && o.kind !== 'heart' && !o.flying
+        if (o.kind !== 'auto' && o.kind !== 'coffee' && !o.flying
             && o.x > L1.MURU_X - 60 && o.x < L1.MURU_X + 240) {
           o.flying = true;
           o.fvx = 6 + Math.random() * 6;
@@ -1094,13 +1207,13 @@ function updateL1(api) {
         baseY: L1.GROUND,
         flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
-    } else if (type === '__heart__') {
+    } else if (type === '__coffee__') {
       L1.obstacles.push({
-        kind: 'heart', x: L1.W + 50,
-        w: 38, h: 38,
+        kind: 'coffee', x: L1.W + 50,
+        w: 50, h: 56,
         baseY: L1.GROUND,
         // Floating mid-air, varying height. Reachable with a held jump.
-        floatY: L1.GROUND - 95 - Math.random() * 35,
+        floatY: L1.GROUND - 95 - Math.random() * 30,
         flying: false, dy: 0, fvx: 0, fvy: 0, rot: 0, rotV: 0,
       });
     } else {
@@ -1190,8 +1303,8 @@ function updateL1(api) {
 
   for (const o of L1.obstacles) {
     if (o.flying) continue;
-    const obBox = (o.kind === 'heart')
-      ? { x: o.x + 4, y: o.floatY - 18, w: o.w - 8, h: o.h - 4 }
+    const obBox = (o.kind === 'coffee')
+      ? { x: o.x + 6, y: o.floatY - 26, w: o.w - 12, h: o.h - 6 }
       : { x: o.x, y: o.baseY - o.h, w: o.w, h: o.h };
     if (!boxOverlap(muruBox, obBox)) continue;
 
@@ -1200,17 +1313,17 @@ function updateL1(api) {
       // Pass through the auto harmlessly.
       continue;
     }
-    if (o.kind === 'heart') {
+    if (o.kind === 'coffee') {
       api.gainLife();
       o.x = -500;
       for (let i = 0; i < 14; i++) {
         L1.particles.push({
           x: L1.MURU_X, y: L1.muru.y - 40,
           vx: (Math.random() - 0.5) * 6, vy: -2 - Math.random() * 4,
-          life: 35, color: i % 2 ? '#E91E63' : '#fff'
+          life: 35, color: i % 2 ? '#7A4014' : '#fff'   // coffee + steam
         });
       }
-      api.toast('💖 +1 LIFE!');
+      api.toast('☕ +1 LIFE — Filter Kaapi!');
       continue;
     }
     if (L1.muru.riding) {
@@ -1279,13 +1392,8 @@ function renderL1(cx) {
     }
   }
 
-  // Obstacles
+  // Obstacles — draw shadow first, then body
   for (const o of L1.obstacles) {
-    const drawIt = (rotateOrigin) => {
-      if (o.kind === 'auto') POWERUP_AUTO.draw(cx, o.x, o.baseY + o.dy, L1.frame);
-      else if (o.kind === 'heart') drawHeart(cx, o.x + o.w / 2, o.floatY + o.dy, L1.frame);
-      else                          OB_TYPES[o.kind].draw(cx, o.x, o.baseY + o.dy, L1.frame);
-    };
     if (o.flying) {
       cx.save();
       cx.translate(o.x + o.w / 2, o.baseY - o.h / 2 + o.dy);
@@ -1293,8 +1401,16 @@ function renderL1(cx) {
       cx.translate(-o.x - o.w / 2, -o.baseY + o.h / 2);
       OB_TYPES[o.kind] && OB_TYPES[o.kind].draw(cx, o.x, o.baseY, L1.frame);
       cx.restore();
+      continue;
+    }
+    if (o.kind === 'auto') {
+      drawObstacleShadow(cx, o.x, o.baseY, o.w);
+      POWERUP_AUTO.draw(cx, o.x, o.baseY, L1.frame);
+    } else if (o.kind === 'coffee') {
+      drawCoffee(cx, o.x + o.w / 2, o.floatY, L1.frame);
     } else {
-      drawIt();
+      drawObstacleShadow(cx, o.x, o.baseY, o.w);
+      OB_TYPES[o.kind].draw(cx, o.x, o.baseY, L1.frame);
     }
   }
 
